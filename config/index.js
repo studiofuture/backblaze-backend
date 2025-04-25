@@ -29,7 +29,7 @@ const config = {
     cleanupInterval: 60 * 60 * 1000, // 1 hour
   },
   ffmpeg: {
-    binPath: '/opt/homebrew/bin/ffmpeg', // Update this for your environment
+    binPath: 'ffmpeg', // Use system PATH instead of hardcoded Mac path
     timeout: 30000, // 30 seconds
   }
 };
