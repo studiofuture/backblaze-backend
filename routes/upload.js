@@ -362,25 +362,29 @@ router.post('/generate-thumbnail', async (req, res) => {
     
     let thumbnailUrl = null;
     let metadata = null;
+    let usedPlaceholder = false;
     
+    // First, extract metadata regardless of thumbnail extraction success
+    try {
+      metadata = await ffmpegService.extractVideoMetadata(videoUrl);
+      logger.info(`[Thumbnail Generation] Extracted metadata:`, metadata);
+    } catch (metadataError) {
+      logger.error(`[Thumbnail Generation] Metadata extraction failed: ${metadataError.message}`);
+      metadata = { duration: 0, width: 0, height: 0 };
+    }
+    
+    // Now try to extract the thumbnail
     try {
       logger.info(`[Thumbnail Generation] Attempting to extract thumbnail from: ${videoUrl}`);
       
-      // Extract metadata first to include in Supabase update
-      try {
-        metadata = await ffmpegService.extractVideoMetadata(videoUrl);
-        logger.info(`[Thumbnail Generation] Extracted metadata:`, metadata);
-      } catch (metadataError) {
-        logger.error(`[Thumbnail Generation] Metadata extraction failed:`, metadataError);
-        metadata = { duration: 0, width: 0, height: 0 };
-      }
-      
+      // This will throw an error if extraction fails
       await ffmpegService.extractThumbnailFromRemote(
         videoUrl, 
         thumbnailPath, 
         timestamp ? parseInt(timestamp, 10) : 5
       );
       
+      // If we get here, extraction was successful
       // Upload the thumbnail to B2
       const thumbnailBucketName = config.b2.buckets.thumbnail.name;
       thumbnailUrl = `https://${thumbnailBucketName}.s3.eu-central-003.backblazeb2.com/${thumbnailFileName}`;
@@ -395,9 +399,11 @@ router.post('/generate-thumbnail', async (req, res) => {
       logger.info(`[Thumbnail Generation] Successfully generated thumbnail: ${thumbnailUrl}`);
       
     } catch (extractError) {
-      logger.error(`[Thumbnail Generation] Extraction failed:`, extractError);
+      // Real extraction failed, now create a placeholder
+      logger.error(`[Thumbnail Generation] Extraction failed: ${extractError.message}`);
+      logger.info('[Thumbnail Generation] Falling back to placeholder thumbnail');
       
-      // Fallback to placeholder if extraction fails
+      // Only try placeholder creation if the real extraction failed
       const placeholderFileName = `placeholder_${baseName}_${Date.now()}.jpg`;
       const placeholderPath = getUploadPath('thumbs', placeholderFileName);
       
@@ -406,15 +412,23 @@ router.post('/generate-thumbnail', async (req, res) => {
         
         const thumbnailBucketName = config.b2.buckets.thumbnail.name;
         thumbnailUrl = `https://${thumbnailBucketName}.s3.eu-central-003.backblazeb2.com/${placeholderFileName}`;
+        usedPlaceholder = true;
         
         await b2Service.uploadThumbnail(placeholderPath, placeholderFileName);
         
-        // Clean up
+        // Clean up placeholder file
         if (fs.existsSync(placeholderPath)) {
           fs.unlinkSync(placeholderPath);
         }
+        
+        logger.info(`[Thumbnail Generation] Created placeholder thumbnail: ${thumbnailUrl}`);
       } catch (placeholderError) {
-        logger.error(`[Thumbnail Generation] Placeholder creation failed:`, placeholderError);
+        logger.error(`[Thumbnail Generation] Placeholder creation failed: ${placeholderError.message}`);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Failed to generate thumbnail or placeholder',
+          details: placeholderError.message
+        });
       }
     }
     
@@ -432,7 +446,7 @@ router.post('/generate-thumbnail', async (req, res) => {
         
         logger.info(`[Thumbnail Generation] Supabase update completed for video ID: ${videoId}`);
       } catch (supabaseError) {
-        logger.error(`[Thumbnail Generation] Supabase update failed:`, supabaseError);
+        logger.error(`[Thumbnail Generation] Supabase update failed: ${supabaseError.message}`);
         // Continue anyway - we still want to return the thumbnail URL
       }
     }
@@ -442,11 +456,11 @@ router.post('/generate-thumbnail', async (req, res) => {
       status: "success",
       thumbnailUrl,
       metadata: metadata || undefined,
-      fallback: thumbnailUrl ? thumbnailUrl.includes('placeholder_') : true
+      fallback: usedPlaceholder
     });
     
   } catch (error) {
-    logger.error(`❌ Thumbnail generation completely failed:`, error);
+    logger.error(`❌ Thumbnail generation completely failed: ${error.message}`);
     
     res.status(500).json({
       status: 'error',
