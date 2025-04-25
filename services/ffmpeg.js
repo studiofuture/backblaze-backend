@@ -32,9 +32,12 @@ async function generateThumbnail(videoPath, outputPath, timestamp = '00:00:05') 
       outputPath
     ]);
     
+    let errorOutput = '';
     // Log all output
     ffmpegProcess.stderr.on('data', (data) => {
-      logger.debug(`FFmpeg Output: ${data.toString()}`);
+      const output = data.toString();
+      errorOutput += output;
+      logger.debug(`FFmpeg Output: ${output}`);
     });
     
     ffmpegProcess.on('close', (code) => {
@@ -42,7 +45,7 @@ async function generateThumbnail(videoPath, outputPath, timestamp = '00:00:05') 
         logger.info(`✅ Thumbnail generated successfully: ${outputPath}`);
         resolve(outputPath);
       } else {
-        const error = new Error(`FFmpeg failed with code ${code}`);
+        const error = new Error(`FFmpeg failed with code ${code}: ${errorOutput}`);
         logger.error(error.message);
         reject(error);
       }
@@ -117,44 +120,52 @@ async function extractThumbnailFromRemote(videoUrl, thumbnailPath, seekTime = 5)
     const directory = path.dirname(thumbnailPath);
     ensureDirectory(directory);
     
-    // Create FFmpeg command
-    const command = ffmpeg(videoUrl)
-      .inputOptions([
-        '-ss', seekTime.toString(), // Seek to position
-        '-t', '1' // Only process 1 second
-      ])
-      .outputOptions([
-        '-frames:v', '1', // Extract 1 frame
-        '-q:v', '2' // High quality
-      ])
-      .on('end', () => {
-        if (fs.existsSync(thumbnailPath)) {
-          logger.info(`✅ Successfully extracted thumbnail: ${thumbnailPath}`);
-          resolve(thumbnailPath);
-        } else {
-          const error = new Error('FFmpeg completed but thumbnail file was not created');
-          logger.error(error.message);
-          reject(error);
-        }
-      })
-      .on('error', (err) => {
-        logger.error(`❌ FFmpeg error: ${err.message}`);
-        reject(err);
-      })
-      .save(thumbnailPath);
+    let errorOutput = '';
+    
+    // Use spawn directly for better error handling and control
+    const ffmpegProcess = spawn(config.ffmpeg.binPath, [
+      '-y',                       // Overwrite output files
+      '-ss', seekTime.toString(), // Seek to position
+      '-i', videoUrl,             // Input file
+      '-vframes', '1',            // Extract 1 frame
+      '-q:v', '2',                // High quality
+      thumbnailPath               // Output path
+    ]);
+    
+    // Collect error output
+    ffmpegProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      errorOutput += output;
+      logger.debug(`[FFmpeg] ${output}`);
+    });
     
     // Set a timeout in case FFmpeg hangs
     const timeout = setTimeout(() => {
-      command.kill('SIGKILL');
-      reject(new Error('FFmpeg process timed out after 30 seconds'));
+      ffmpegProcess.kill('SIGKILL');
+      const error = new Error('FFmpeg process timed out after 30 seconds');
+      logger.error(error.message);
+      reject(error);
     }, config.ffmpeg.timeout);
     
-    command.on('end', () => clearTimeout(timeout));
-    command.on('error', () => clearTimeout(timeout));
+    // Handle process completion
+    ffmpegProcess.on('close', (code) => {
+      clearTimeout(timeout);
+      
+      if (code === 0 && fs.existsSync(thumbnailPath)) {
+        logger.info(`✅ Successfully extracted thumbnail: ${thumbnailPath}`);
+        resolve(thumbnailPath);
+      } else {
+        const error = new Error(`FFmpeg failed with code ${code}: ${errorOutput}`);
+        logger.error(error.message);
+        reject(error);
+      }
+    });
     
-    // Log FFmpeg output
-    command.stderr.on('data', (chunk) => {
-      logger.debug(`[FFmpeg] ${chunk.toString().trim()}`);
+    // Handle process errors
+    ffmpegProcess.on('error', (error) => {
+      clearTimeout(timeout);
+      logger.error(`❌ FFmpeg process error: ${error.message}`);
+      reject(error);
     });
   });
 }
@@ -181,6 +192,14 @@ async function createPlaceholderThumbnail(outputPath) {
       outputPath
     ]);
     
+    let errorOutput = '';
+    
+    command.stderr.on('data', (data) => {
+      const output = data.toString();
+      errorOutput += output;
+      logger.debug(`[FFmpeg] ${output}`);
+    });
+    
     command.on('close', (code) => {
       if (code === 0) {
         if (fs.existsSync(outputPath)) {
@@ -192,7 +211,7 @@ async function createPlaceholderThumbnail(outputPath) {
           reject(error);
         }
       } else {
-        const error = new Error(`FFmpeg exited with code ${code}`);
+        const error = new Error(`FFmpeg exited with code ${code}: ${errorOutput}`);
         logger.error(error.message);
         reject(error);
       }
@@ -205,11 +224,7 @@ async function createPlaceholderThumbnail(outputPath) {
     }, 10000);
     
     command.on('close', () => clearTimeout(timeout));
-    
-    // Log errors
-    command.stderr.on('data', (data) => {
-      logger.debug(`[FFmpeg] ${data.toString().trim()}`);
-    });
+    command.on('error', () => clearTimeout(timeout));
   });
 }
 
