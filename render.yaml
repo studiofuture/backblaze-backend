@@ -2,7 +2,7 @@ services:
   - type: web
     name: rushes-backend
     env: node
-    buildCommand: apt-get update -y && apt-get install -y ffmpeg && npm install
+    buildCommand: ./build.sh
     startCommand: npm start
     plan: free
     envVars:
