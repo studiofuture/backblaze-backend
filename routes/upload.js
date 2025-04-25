@@ -337,10 +337,11 @@ router.post('/profile-pic', upload.single('file'), async (req, res) => {
  */
 router.post('/generate-thumbnail', async (req, res) => {
   try {
-    const { videoUrl, timestamp } = req.body;
+    const { videoUrl, videoId, timestamp } = req.body;
     
     logger.info(`[Thumbnail Generation] Received request:`, { 
-      videoUrl, 
+      videoUrl,
+      videoId,
       timestamp
     });
     
@@ -359,8 +360,20 @@ router.post('/generate-thumbnail', async (req, res) => {
     
     const thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
     
+    let thumbnailUrl = null;
+    let metadata = null;
+    
     try {
       logger.info(`[Thumbnail Generation] Attempting to extract thumbnail from: ${videoUrl}`);
+      
+      // Extract metadata first to include in Supabase update
+      try {
+        metadata = await ffmpegService.extractVideoMetadata(videoUrl);
+        logger.info(`[Thumbnail Generation] Extracted metadata:`, metadata);
+      } catch (metadataError) {
+        logger.error(`[Thumbnail Generation] Metadata extraction failed:`, metadataError);
+        metadata = { duration: 0, width: 0, height: 0 };
+      }
       
       await ffmpegService.extractThumbnailFromRemote(
         videoUrl, 
@@ -370,7 +383,7 @@ router.post('/generate-thumbnail', async (req, res) => {
       
       // Upload the thumbnail to B2
       const thumbnailBucketName = config.b2.buckets.thumbnail.name;
-      const thumbnailUrl = `https://${thumbnailBucketName}.s3.eu-central-003.backblazeb2.com/${thumbnailFileName}`;
+      thumbnailUrl = `https://${thumbnailBucketName}.s3.eu-central-003.backblazeb2.com/${thumbnailFileName}`;
       
       await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
       
@@ -381,11 +394,6 @@ router.post('/generate-thumbnail', async (req, res) => {
       
       logger.info(`[Thumbnail Generation] Successfully generated thumbnail: ${thumbnailUrl}`);
       
-      res.json({
-        status: "success",
-        thumbnailUrl
-      });
-      
     } catch (extractError) {
       logger.error(`[Thumbnail Generation] Extraction failed:`, extractError);
       
@@ -393,24 +401,49 @@ router.post('/generate-thumbnail', async (req, res) => {
       const placeholderFileName = `placeholder_${baseName}_${Date.now()}.jpg`;
       const placeholderPath = getUploadPath('thumbs', placeholderFileName);
       
-      await ffmpegService.createPlaceholderThumbnail(placeholderPath);
-      
-      const thumbnailBucketName = config.b2.buckets.thumbnail.name;
-      const thumbnailUrl = `https://${thumbnailBucketName}.s3.eu-central-003.backblazeb2.com/${placeholderFileName}`;
-      
-      await b2Service.uploadThumbnail(placeholderPath, placeholderFileName);
-      
-      // Clean up
-      if (fs.existsSync(placeholderPath)) {
-        fs.unlinkSync(placeholderPath);
+      try {
+        await ffmpegService.createPlaceholderThumbnail(placeholderPath);
+        
+        const thumbnailBucketName = config.b2.buckets.thumbnail.name;
+        thumbnailUrl = `https://${thumbnailBucketName}.s3.eu-central-003.backblazeb2.com/${placeholderFileName}`;
+        
+        await b2Service.uploadThumbnail(placeholderPath, placeholderFileName);
+        
+        // Clean up
+        if (fs.existsSync(placeholderPath)) {
+          fs.unlinkSync(placeholderPath);
+        }
+      } catch (placeholderError) {
+        logger.error(`[Thumbnail Generation] Placeholder creation failed:`, placeholderError);
       }
-      
-      res.json({
-        status: "success",
-        thumbnailUrl,
-        fallback: true
-      });
     }
+    
+    // Update Supabase with the thumbnail URL and metadata if videoId is provided
+    if (videoId && thumbnailUrl) {
+      try {
+        logger.info(`[Thumbnail Generation] Updating Supabase for video ID: ${videoId}`);
+        
+        await supabaseService.updateVideoMetadata(videoId, {
+          thumbnailUrl: thumbnailUrl,
+          duration: metadata?.duration || 0,
+          width: metadata?.width || 0,
+          height: metadata?.height || 0
+        });
+        
+        logger.info(`[Thumbnail Generation] Supabase update completed for video ID: ${videoId}`);
+      } catch (supabaseError) {
+        logger.error(`[Thumbnail Generation] Supabase update failed:`, supabaseError);
+        // Continue anyway - we still want to return the thumbnail URL
+      }
+    }
+    
+    // Return response with the thumbnail URL and metadata
+    res.json({
+      status: "success",
+      thumbnailUrl,
+      metadata: metadata || undefined,
+      fallback: thumbnailUrl ? thumbnailUrl.includes('placeholder_') : true
+    });
     
   } catch (error) {
     logger.error(`❌ Thumbnail generation completely failed:`, error);
