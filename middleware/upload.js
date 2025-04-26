@@ -48,7 +48,7 @@ const fileFilter = (req, file, cb) => {
 
 // Configure upload limits
 const limits = {
-  fileSize: 1024 * 1024 * 1024, // 1GB max file size
+  fileSize: 10 * 1024 * 1024 * 1024, // 1GB max file size
   files: 1 // Maximum number of files per request
 };
 
