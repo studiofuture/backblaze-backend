@@ -22,15 +22,24 @@ const config = {
     }
   },
   upload: {
-    chunkSize: 100 * 1024 * 1024, // 100MB chunks
-    maxConcurrentChunks: 5,
-    retryAttempts: 3,
+    chunkSize: 50 * 1024 * 1024, // 50MB chunks (smaller for better reliability)
+    maxConcurrentChunks: 3,      // Reduced from 5 to prevent overwhelming the server
+    retryAttempts: 5,            // Increased from 3 to 5
     statusRetention: 24 * 60 * 60 * 1000, // 24 hours
     cleanupInterval: 60 * 60 * 1000, // 1 hour
+    timeoutMs: 120000,           // 2 minutes timeout for requests
   },
   ffmpeg: {
     binPath: 'ffmpeg', // Use system PATH instead of hardcoded Mac path
-    timeout: 30000, // 30 seconds
+    timeout: 45000,    // 45 seconds (increased from 30)
+  },
+  supabase: {
+    url: process.env.SUPABASE_URL,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
+  },
+  server: {
+    bodyLimit: '1gb',  // Increase body size limit
+    timeoutMs: 3600000 // 1 hour timeout for server operations
   }
 };
 
