@@ -5,12 +5,13 @@ const https = require('https');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { setupDirectories } = require('./utils/directory');
-const { validateEnvironment } = require('./config');
+const { validateEnvironment, config } = require('./config');
 const errorHandler = require('./middleware/errorHandler');
 const uploadRoutes = require('./routes/upload');
 const videoRoutes = require('./routes/video');
 const testRoutes = require('./routes/test');
 const logger = require('./utils/logger');
+const { startHeartbeat } = require('./utils/heartbeat');
 
 // Configure global HTTP agent settings to prevent EPIPE errors
 http.globalAgent.keepAlive = true;
@@ -25,6 +26,9 @@ validateEnvironment();
 const app = express();
 const server = http.createServer(app);
 
+// Set server timeout
+server.timeout = config.server.timeoutMs;
+
 // Configure Socket.io with proper CORS settings
 const io = new Server(server, {
   cors: {
@@ -33,7 +37,7 @@ const io = new Server(server, {
     credentials: true
   },
   pingTimeout: 60000, // Increase ping timeout for better reliability
-  pingInterval: 25000  // How often to ping clients
+  pingInterval: 25000 // How often to ping clients
 });
 
 // Make io available to routes
@@ -45,13 +49,17 @@ statusUtils.setupSocketIO(io);
 
 // Setup middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: config.server.bodyLimit }));
+app.use(express.urlencoded({ extended: true, limit: config.server.bodyLimit }));
 
 // Create required directories
 setupDirectories().catch(err => {
   logger.error('Failed to create directories:', err);
   process.exit(1);
 });
+
+// Start server heartbeat to prevent idle timeouts
+const heartbeat = startHeartbeat();
 
 // Register routes
 app.use('/upload', uploadRoutes);
@@ -60,7 +68,12 @@ app.use('/test', testRoutes);
 
 // Simple health check route
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date() });
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage()
+  });
 });
 
 // Socket.io connection handling
@@ -119,6 +132,12 @@ server.listen(port, () => {
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM signal received: closing HTTP server');
+  
+  // Stop the heartbeat
+  if (heartbeat) {
+    heartbeat.stop();
+  }
+  
   server.close(() => {
     logger.info('HTTP server closed');
     process.exit(0);
