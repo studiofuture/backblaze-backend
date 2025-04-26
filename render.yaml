@@ -12,3 +12,8 @@ services:
       name: uploads
       mountPath: /opt/render/project/src/uploads
       sizeGB: 1
+    healthCheckPath: /health
+    autoDeploy: false
+    scaling:
+      minInstances: 1
+      maxInstances: 1
