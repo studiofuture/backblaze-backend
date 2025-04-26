@@ -1,9 +1,11 @@
 const B2 = require('backblaze-b2');
-const fs = require('fs');
+const fs = require('fs').promises;
+const fsSync = require('fs');
 const crypto = require('crypto');
 const { config } = require('../config');
 const logger = require('../utils/logger');
 const { updateUploadStatus } = require('../utils/status');
+const { startHeartbeat } = require('../utils/heartbeat');
 
 // Initialize Backblaze B2 client
 const b2 = new B2({
@@ -41,10 +43,14 @@ async function uploadFile(file, uploadId, options = {}) {
     contentType = 'video/mp4'
   } = options;
   
+  // Start a heartbeat to keep the server alive during upload
+  const heartbeat = startHeartbeat();
+  
   try {
     await b2.authorize();
     
-    const fileSize = fs.statSync(file.path).size;
+    const fileStats = await fs.stat(file.path);
+    const fileSize = fileStats.size;
     const chunkSize = config.upload.chunkSize;
     
     logger.info(`📌 Uploading file: ${file.originalname} (${fileSize} bytes) to ${bucketName}`);
@@ -70,60 +76,45 @@ async function uploadFile(file, uploadId, options = {}) {
       
       const fileId = startFileResponse.data.fileId;
       let partSha1Array = [];
-      let partNumber = 1;
-      let promises = [];
       
       // Calculate total number of parts for progress tracking
       const totalParts = Math.ceil(fileSize / chunkSize);
       let completedParts = 0;
-      let totalBytesUploaded = 0;
       
-      // Read the entire file into memory
-      // Note: For extremely large files, you might want to use streams instead
-      const fileData = fs.readFileSync(file.path);
+      logger.info(`📌 Uploading large file in ${totalParts} parts of ${Math.round(chunkSize/1024/1024)}MB each`);
       
-      // Process file in chunks
-      for (let offset = 0; offset < fileSize; offset += chunkSize) {
-        const end = Math.min(offset + chunkSize, fileSize);
-        const chunkSize = end - offset;
-        const chunk = fileData.slice(offset, end);
+      // Process each chunk one by one (streaming approach)
+      for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+        const start = (partNumber - 1) * chunkSize;
+        const end = Math.min(partNumber * chunkSize, fileSize);
+        const currentChunkSize = end - start;
+        
+        logger.info(`📌 Processing part ${partNumber}/${totalParts} (${Math.round(currentChunkSize/1024/1024)}MB)`);
+        
+        // Read just this chunk from file instead of loading entire file
+        const chunkBuffer = Buffer.alloc(currentChunkSize);
+        const fileHandle = await fs.open(file.path, 'r');
+        await fileHandle.read(chunkBuffer, 0, currentChunkSize, start);
+        await fileHandle.close();
         
         // Calculate SHA-1 hash for this chunk
-        const sha1Hash = crypto.createHash('sha1').update(chunk).digest('hex');
+        const sha1Hash = crypto.createHash('sha1').update(chunkBuffer).digest('hex');
+        
+        // Upload with retries
+        logger.info(`📌 Uploading part ${partNumber}/${totalParts} (size: ${currentChunkSize} bytes)`);
+        await uploadChunk(fileId, partNumber, chunkBuffer);
+        
+        // Store hash and update progress
         partSha1Array.push(sha1Hash);
+        completedParts++;
         
-        logger.info(`📌 Uploading part ${partNumber}/${totalParts} (size: ${chunkSize} bytes)`);
+        const progressPercent = Math.min(95, Math.floor((completedParts / totalParts) * 100));
+        updateUploadStatus(uploadId, {
+          progress: progressPercent,
+          stage: `uploaded part ${completedParts}/${totalParts}`
+        });
         
-        // Upload chunk with retry logic
-        promises.push(
-          uploadChunk(fileId, partNumber, chunk)
-            .then(() => {
-              // Update progress after each chunk
-              completedParts++;
-              totalBytesUploaded += chunkSize;
-              const progressPercent = Math.min(95, Math.floor((totalBytesUploaded / fileSize) * 100));
-              
-              updateUploadStatus(uploadId, {
-                progress: progressPercent,
-                stage: `uploaded part ${completedParts}/${totalParts}`
-              });
-              
-              logger.info(`✅ Completed parts: ${completedParts}/${totalParts} (${progressPercent}%)`);
-            })
-        );
-        
-        partNumber++;
-        
-        // Limit parallel uploads
-        if (promises.length >= config.upload.maxConcurrentChunks) {
-          await Promise.all(promises);
-          promises = [];
-        }
-      }
-      
-      // Wait for any remaining uploads to complete
-      if (promises.length > 0) {
-        await Promise.all(promises);
+        logger.info(`✅ Completed part ${partNumber}/${totalParts} (${progressPercent}%)`);
       }
       
       // Finalize the large file
@@ -157,11 +148,12 @@ async function uploadFile(file, uploadId, options = {}) {
         const uploadUrlData = await b2.getUploadUrl({ bucketId: bucketId });
         
         // Upload file
+        const fileData = await fs.readFile(file.path);
         await b2.uploadFile({
           uploadUrl: uploadUrlData.data.uploadUrl,
           uploadAuthToken: uploadUrlData.data.authorizationToken,
           fileName: file.originalname,
-          data: fs.readFileSync(file.path),
+          data: fileData,
           contentType: contentType,
         });
         
@@ -174,10 +166,13 @@ async function uploadFile(file, uploadId, options = {}) {
       }
     }
     
+    // Stop the heartbeat
+    heartbeat.stop();
+    
     // Clean up temp file if requested
     if (deleteFile) {
-      if (fs.existsSync(file.path)) {
-        fs.unlinkSync(file.path);
+      if (fsSync.existsSync(file.path)) {
+        await fs.unlink(file.path);
         logger.info(`✅ Cleaned up temp file: ${file.path}`);
       }
     }
@@ -185,12 +180,15 @@ async function uploadFile(file, uploadId, options = {}) {
     // Return the file URL
     return fileUrl;
   } catch (error) {
+    // Stop the heartbeat
+    heartbeat.stop();
+    
     logger.error(`❌ Upload failed:`, error);
     
     // Try to clean up temp file on error
-    if (deleteFile && fs.existsSync(file.path)) {
+    if (deleteFile && fsSync.existsSync(file.path)) {
       try {
-        fs.unlinkSync(file.path);
+        await fs.unlink(file.path);
         logger.info(`✅ Cleaned up temp file after error: ${file.path}`);
       } catch (cleanupError) {
         logger.error(`❌ Failed to clean up temp file:`, cleanupError);
@@ -216,7 +214,7 @@ async function uploadThumbnail(filePath, fileName) {
     const bucketId = config.b2.buckets.thumbnail.id;
     const bucketName = config.b2.buckets.thumbnail.name;
     
-    if (!fs.existsSync(filePath)) {
+    if (!fsSync.existsSync(filePath)) {
       throw new Error(`Thumbnail file not found at: ${filePath}`);
     }
     
@@ -228,7 +226,7 @@ async function uploadThumbnail(filePath, fileName) {
     logger.info(`✅ Obtained upload URL for thumbnail`);
     
     // Read the file data
-    const fileData = fs.readFileSync(filePath);
+    const fileData = await fs.readFile(filePath);
     
     // Upload the file
     const uploadResult = await b2.uploadFile({
