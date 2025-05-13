@@ -18,11 +18,31 @@ const logger = require('../utils/logger');
 const { config } = require('../config');
 
 /**
+ * Handle OPTIONS requests for the status endpoint
+ * OPTIONS /upload/status/:uploadId
+ */
+router.options('/status/:uploadId', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.sendStatus(200);
+});
+
+/**
  * Get upload status
  * GET /upload/status/:uploadId
  */
 router.get('/status/:uploadId', (req, res) => {
+  // Add CORS headers specifically for this endpoint
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Add debug logging
   const { uploadId } = req.params;
+  logger.info(`Status request for upload ${uploadId} from origin: ${req.headers.origin || 'unknown'}`);
   
   const status = getUploadStatus(uploadId);
   if (!status) {
@@ -32,6 +52,7 @@ router.get('/status/:uploadId', (req, res) => {
   res.json(status);
 });
 
+// The rest of your file remains unchanged
 /**
  * Upload video to Backblaze (with thumbnail extraction and metadata)
  * POST /upload/video
