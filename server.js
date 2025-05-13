@@ -29,10 +29,19 @@ const server = http.createServer(app);
 // Set server timeout
 server.timeout = config.server.timeoutMs;
 
+// Define allowed origins
+const allowedOrigins = [
+  "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
+  "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "*"  // Allow all origins during development/debugging
+];
+
 // Configure Socket.io with proper CORS settings
 const io = new Server(server, {
   cors: {
-    origin: "*", // In production, restrict this to your specific domains
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -48,9 +57,28 @@ const statusUtils = require('./utils/status');
 statusUtils.setupSocketIO(io);
 
 // Setup middleware
-app.use(cors());
+app.use(cors({
+  origin: allowedOrigins,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  credentials: true
+}));
+
 app.use(express.json({ limit: config.server.bodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: config.server.bodyLimit }));
+
+// Add headers for better debugging
+app.use((req, res, next) => {
+  // Add server identity header
+  res.setHeader('X-Server-ID', 'backblaze-upload-service');
+  
+  // Add explicit CORS headers to all responses
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  
+  next();
+});
 
 // Create required directories
 setupDirectories().catch(err => {
@@ -72,14 +100,27 @@ app.get('/health', (req, res) => {
     status: 'ok', 
     timestamp: new Date(),
     uptime: process.uptime(),
-    memory: process.memoryUsage()
+    memory: process.memoryUsage(),
+    cors: {
+      allowedOrigins
+    }
+  });
+});
+
+// Add a CORS test endpoint
+app.get('/cors-test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'CORS is properly configured',
+    origin: req.headers.origin || 'Unknown',
+    time: new Date().toISOString()
   });
 });
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
   const clientId = socket.id;
-  logger.info(`Client connected: ${clientId}`);
+  logger.info(`Client connected: ${clientId} from ${socket.handshake.headers.origin || 'Unknown origin'}`);
   
   // Client subscribes to an upload
   socket.on('subscribe', (uploadId) => {
@@ -92,12 +133,28 @@ io.on('connection', (socket) => {
     socket.join(uploadId);
     
     // Send current status if available
-    const status = statusUtils.getUploadStatus(uploadId);
+    let status = statusUtils.getUploadStatus(uploadId);
+    
+    // Try with normalized ID if original ID not found
+    if (!status && uploadId.startsWith('url_')) {
+      const timestamp = uploadId.split('_')[1];
+      const normalizedId = `upload_${timestamp}`;
+      logger.info(`Trying normalized ID: ${normalizedId}`);
+      status = statusUtils.getUploadStatus(normalizedId);
+    }
+    
     if (status) {
       socket.emit('status', status);
       logger.debug(`Sent existing status to client ${clientId} for upload ${uploadId}`);
     } else {
       logger.debug(`No existing status for upload ${uploadId}`);
+      
+      // Send welcome message to confirm connection works
+      socket.emit('welcome', { 
+        message: 'Connected to upload service',
+        socketId: socket.id,
+        timestamp: Date.now()
+      });
     }
   });
   
@@ -127,6 +184,7 @@ app.use(errorHandler);
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
   logger.info(`✅ Server running on http://localhost:${port}`);
+  logger.info(`🔌 Socket.IO configured with origins: ${allowedOrigins.join(', ')}`);
 });
 
 // Handle graceful shutdown
