@@ -26,8 +26,10 @@ validateEnvironment();
 const app = express();
 const server = http.createServer(app);
 
-// Set server timeout
+// Set server timeout and connection limits
 server.timeout = config.server.timeoutMs;
+server.maxConnections = 100; // Adjust based on your server capacity
+server.keepAliveTimeout = 60000; // 60 seconds, adjust as needed
 
 // Define allowed origins
 const allowedOrigins = [
@@ -66,7 +68,7 @@ app.use(cors({
 app.use(express.json({ limit: config.server.bodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: config.server.bodyLimit }));
 
-// Add headers for better debugging
+// Add headers for better debugging and handle preflight OPTIONS requests
 app.use((req, res, next) => {
   // Add server identity header
   res.setHeader('X-Server-ID', 'backblaze-upload-service');
@@ -76,6 +78,12 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle OPTIONS method for CORS preflight
+  if (req.method === 'OPTIONS') {
+    logger.info(`Global OPTIONS request received from origin: ${req.headers.origin || 'unknown'} for path: ${req.path}`);
+    return res.sendStatus(200);
+  }
   
   next();
 });
