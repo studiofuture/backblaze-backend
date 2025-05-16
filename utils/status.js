@@ -80,6 +80,7 @@ function initUploadStatus(uploadId, initialData = {}) {
 
 // Mark upload as complete
 function completeUploadStatus(uploadId, data = {}) {
+  // Always ensure these critical flags are set for a complete state
   const status = {
     ...(uploadStatus[uploadId] || {}),
     ...data,
@@ -95,17 +96,28 @@ function completeUploadStatus(uploadId, data = {}) {
   
   if (io) {
     try {
-      // Emit twice to ensure delivery (works around some edge cases)
+      // Emit multiple times with increasing delays to ensure delivery
+      // First immediate emit
       io.to(uploadId).emit('status', status);
       logger.info(`Upload complete: ${uploadId}, emitted status update`);
       
-      // Small delay before second emission to ensure clients have time to process
+      // Second emit after 500ms
       setTimeout(() => {
         try {
           io.to(uploadId).emit('status', status);
-          logger.info(`Re-emitted completion status for ${uploadId}`);
+          logger.info(`Re-emitted completion status for ${uploadId} (500ms)`);
+          
+          // Third emit after 2 seconds
+          setTimeout(() => {
+            try {
+              io.to(uploadId).emit('status', status);
+              logger.info(`Re-emitted completion status for ${uploadId} (2s)`);
+            } catch (thirdError) {
+              logger.error(`Failed on third completion emit for ${uploadId}:`, thirdError);
+            }
+          }, 1500);
         } catch (secondError) {
-          logger.error(`Failed to re-emit completion status for ${uploadId}:`, secondError);
+          logger.error(`Failed on second completion emit for ${uploadId}:`, secondError);
         }
       }, 500);
     } catch (error) {
