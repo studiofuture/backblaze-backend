@@ -5,25 +5,6 @@ const logger = require('../utils/logger');
 const { config } = require('../config');
 const { createClient } = require('@supabase/supabase-js');
 
-// Add this function at the beginning of the file
-function setCorsHeaders(req, res, next) {
-  // Always set CORS headers regardless of HTTP method
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  // If this is a preflight OPTIONS request, send 200 immediately
-  if (req.method === 'OPTIONS') {
-    logger.info(`Handling OPTIONS request for ${req.path} from origin: ${req.headers.origin || 'unknown'}`);
-    return res.sendStatus(200);
-  }
-  
-  next();
-}
-
-// Apply the middleware to all routes in this router
-router.use(setCorsHeaders);
 
 // Initialize Supabase client
 let supabase = null;
