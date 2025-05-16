@@ -7,6 +7,7 @@ const cors = require('cors');
 const { setupDirectories } = require('./utils/directory');
 const { validateEnvironment, config } = require('./config');
 const errorHandler = require('./middleware/errorHandler');
+const corsMiddleware = require('./middleware/cors');
 const uploadRoutes = require('./routes/upload');
 const videoRoutes = require('./routes/video');
 const testRoutes = require('./routes/test');
@@ -40,12 +41,19 @@ const allowedOrigins = [
   "*"  // Allow all origins during development/debugging
 ];
 
+// Apply CORS middleware FIRST - this is critical for proper CORS handling
+app.use(corsMiddleware);
+
 // Configure Socket.io with proper CORS settings
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: function(origin, callback) {
+      // Allow any origin for Socket.io
+      callback(null, true);
+    },
     methods: ["GET", "POST"],
-    credentials: true
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "x-upload-id"]
   },
   pingTimeout: 60000, // Increase ping timeout for better reliability
   pingInterval: 25000 // How often to ping clients
@@ -59,6 +67,7 @@ const statusUtils = require('./utils/status');
 statusUtils.setupSocketIO(io);
 
 // Setup middleware
+// This is a fallback CORS setup - the main one is applied above
 app.use(cors({
   origin: allowedOrigins,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -68,23 +77,10 @@ app.use(cors({
 app.use(express.json({ limit: config.server.bodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: config.server.bodyLimit }));
 
-// Add headers for better debugging and handle preflight OPTIONS requests
+// Add headers for better debugging
 app.use((req, res, next) => {
   // Add server identity header
   res.setHeader('X-Server-ID', 'backblaze-upload-service');
-  
-  // Add explicit CORS headers to all responses
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  
-  // Handle OPTIONS method for CORS preflight
-  if (req.method === 'OPTIONS') {
-    logger.info(`Global OPTIONS request received from origin: ${req.headers.origin || 'unknown'} for path: ${req.path}`);
-    return res.sendStatus(200);
-  }
-  
   next();
 });
 
