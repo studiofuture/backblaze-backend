@@ -7,6 +7,21 @@ function errorHandler(err, req, res, next) {
   // Log the error
   logger.error('Unhandled error:', err);
   
+  // CRITICAL: Preserve CORS headers that were set earlier
+  // This ensures error responses still follow CORS rules
+  if (!res.headersSent) {
+    // If headers haven't been sent yet, ensure CORS headers are applied
+    const origin = req.headers.origin;
+    if (origin) {
+      res.header('Access-Control-Allow-Origin', origin);
+    } else {
+      res.header('Access-Control-Allow-Origin', '*');
+    }
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, Accept');
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
+  
   // Determine if this is a known error type
   let statusCode = 500;
   let errorMessage = 'An unexpected error occurred';
