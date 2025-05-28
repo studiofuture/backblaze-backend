@@ -132,6 +132,28 @@ app.get('/health', (req, res) => {
   });
 });
 
+app.get('/test-direct', (req, res) => {
+  res.json({
+    message: 'Direct route works!',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/cors-test-direct', (req, res) => {
+  // Set CORS headers manually
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  res.json({
+    success: true,
+    message: 'Direct CORS test works!',
+    origin: req.headers.origin || 'Unknown',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Add a CORS test endpoint
 app.get('/cors-test', (req, res) => {
   res.json({
