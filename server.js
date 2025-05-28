@@ -38,6 +38,7 @@ const allowedOrigins = [
   "https://rvshes.com",
   "https://backblaze-backend-p9xu.onrender.com", // ADD THIS LINE
   "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
+   "https://lovable.dev",
   "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
   "http://localhost:3000",
   "http://localhost:5173"
@@ -49,7 +50,7 @@ if (process.env.NODE_ENV === 'production') {
   // allowedOrigins.push("https://your-render-app.onrender.com");
 }
 
-// Apply CORS middleware FIRST
+// Also update your CORS middleware to be more permissive in development
 app.use(corsMiddleware);
 
 // Configure Socket.io with proper CORS settings
@@ -62,7 +63,14 @@ const io = new Server(server, {
       if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
         callback(null, true);
       } else {
-        callback(new Error('Not allowed by CORS'));
+        // In development, log but still allow unknown origins
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`⚠️ Unknown origin allowed in dev: ${origin}`);
+          callback(null, true);
+        } else {
+          console.error(`❌ CORS blocked origin: ${origin}`);
+          callback(new Error('Not allowed by CORS'));
+        }
       }
     },
     methods: ["GET", "POST"],
@@ -164,29 +172,71 @@ app.get('/cors-test', (req, res) => {
   });
 });
 
-// WORKING UPLOAD STATUS ROUTE - ADD THIS
+// ENHANCED UPLOAD STATUS ROUTE
 app.get('/upload/status/:uploadId', (req, res) => {
-  // Set CORS headers first
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  // CORS headers are handled by middleware, but let's be extra sure
+  const origin = req.headers.origin;
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, Accept');
   res.header('Access-Control-Allow-Credentials', 'true');
   
   const { uploadId } = req.params;
-  logger.info(`Status request for upload ${uploadId}`);
+  logger.info(`📊 Status request for upload ${uploadId} from origin: ${origin || 'unknown'}`);
   
   try {
     const { getUploadStatus } = require('./utils/status');
-    const status = getUploadStatus(uploadId);
+    let status = getUploadStatus(uploadId);
     
+    // If not found with original ID, try alternative formats
     if (!status) {
-      return res.status(404).json({ error: 'Upload not found' });
+      logger.info(`🔍 Upload ${uploadId} not found, trying alternative formats...`);
+      
+      // Try with upload_ prefix if it doesn't have one
+      if (!uploadId.startsWith('upload_') && !uploadId.startsWith('url_')) {
+        const altId = `upload_${uploadId}`;
+        status = getUploadStatus(altId);
+        if (status) {
+          logger.info(`✅ Found status with alternative ID: ${altId}`);
+        }
+      }
+      
+      // Try with url_ prefix converted to upload_
+      if (!status && uploadId.startsWith('url_')) {
+        const timestamp = uploadId.split('_')[1];
+        const altId = `upload_${timestamp}`;
+        status = getUploadStatus(altId);
+        if (status) {
+          logger.info(`✅ Found status with normalized ID: ${altId}`);
+        }
+      }
     }
     
+    if (!status) {
+      logger.warn(`❌ Upload status not found for ID: ${uploadId}`);
+      
+      // Return a helpful response instead of 404
+      return res.status(404).json({ 
+        error: 'Upload not found',
+        message: 'This upload may have expired or completed already',
+        uploadId: uploadId,
+        availableStatuses: Object.keys(require('./utils/status').uploadStatus || {}).length
+      });
+    }
+    
+    logger.info(`✅ Returning status for ${uploadId}:`, status);
     res.json(status);
   } catch (error) {
-    logger.error('Status route error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('❌ Status route error:', error);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to retrieve upload status',
+      uploadId: uploadId
+    });
   }
 });
 
