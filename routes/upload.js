@@ -60,6 +60,7 @@ router.get('/cors-test', (req, res) => {
 /**
  * Upload video to Backblaze with thumbnail extraction
  * POST /upload/video
+ * FIXED: Uses consistent timestamp for both uploadId and filename
  */
 router.post('/video', upload.single('file'), async (req, res) => {
   let uploadId;
@@ -69,14 +70,17 @@ router.post('/video', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    uploadId = `upload_${Date.now()}`;
+    // FIXED: Generate timestamp ONCE and use it for both ID and filename
+    const timestamp = Date.now();
+    uploadId = `upload_${timestamp}`;
+    
     logger.info(`🎬 Video upload started: ${uploadId}`);
     logger.info(`📁 File: ${req.file.originalname} (${req.file.size} bytes)`);
 
-    // Generate unique filename
+    // Generate unique filename using the SAME timestamp
     const originalExt = path.extname(req.file.originalname);
     const baseName = path.basename(req.file.originalname, originalExt);
-    const uniqueFilename = `${baseName}_${Date.now()}${originalExt}`;
+    const uniqueFilename = `${baseName}_${timestamp}${originalExt}`;
     req.file.originalname = uniqueFilename;
     
     // Prepare video URL
@@ -141,8 +145,9 @@ async function processVideoUpload(uploadId, file, videoUrl, baseName, videoId) {
         metadata
       });
       
-      // Generate thumbnail
-      const thumbnailFileName = `${baseName}_${Date.now()}.jpg`;
+      // Generate thumbnail - use same timestamp for consistency
+      const timestamp = uploadId.split('_')[1]; // Extract timestamp from uploadId
+      const thumbnailFileName = `${baseName}_${timestamp}.jpg`;
       const thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
       
       logger.info(`🖼️ Generating thumbnail: ${thumbnailPath}`);
@@ -194,7 +199,8 @@ async function processVideoUpload(uploadId, file, videoUrl, baseName, videoId) {
           progress: 95
         });
         
-        const placeholderFileName = `placeholder_${baseName}_${Date.now()}.jpg`;
+        const timestamp = uploadId.split('_')[1]; // Extract timestamp from uploadId
+        const placeholderFileName = `placeholder_${baseName}_${timestamp}.jpg`;
         const placeholderPath = getUploadPath('thumbs', placeholderFileName);
         
         await ffmpegService.createPlaceholderThumbnail(placeholderPath);
@@ -292,7 +298,8 @@ router.post('/profile-pic', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const uploadId = `profile_${Date.now()}`;
+    const timestamp = Date.now();
+    const uploadId = `profile_${timestamp}`;
     logger.info(`👤 Profile picture upload: ${uploadId}`);
 
     const uniqueFilename = generateUniqueFilename(req.file.originalname);
@@ -339,7 +346,8 @@ router.post('/generate-thumbnail', async (req, res) => {
     
     const videoFilename = path.basename(videoUrl);
     const baseName = path.basename(videoFilename, path.extname(videoFilename));
-    const thumbnailFileName = `${baseName}_thumb_${Date.now()}.jpg`;
+    const currentTimestamp = Date.now();
+    const thumbnailFileName = `${baseName}_thumb_${currentTimestamp}.jpg`;
     const thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
     
     let thumbnailUrl = null;
@@ -378,7 +386,7 @@ router.post('/generate-thumbnail', async (req, res) => {
       // Create placeholder
       logger.info(`🔄 Creating placeholder thumbnail`);
       
-      const placeholderFileName = `placeholder_${baseName}_${Date.now()}.jpg`;
+      const placeholderFileName = `placeholder_${baseName}_${currentTimestamp}.jpg`;
       const placeholderPath = getUploadPath('thumbs', placeholderFileName);
       
       try {
