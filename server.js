@@ -13,7 +13,7 @@ const testRoutes = require('./routes/test');
 const logger = require('./utils/logger');
 const { startHeartbeat } = require('./utils/heartbeat');
 
-// Configure global HTTP agent settings to prevent EPIPE errors
+// Configure global HTTP agent settings
 http.globalAgent.keepAlive = true;
 https.globalAgent.keepAlive = true;
 http.globalAgent.keepAliveMsecs = 60000;
@@ -28,74 +28,51 @@ const server = http.createServer(app);
 
 // Set server timeout and connection limits
 server.timeout = config.server.timeoutMs;
-server.maxConnections = 200; // Increased for paid plan
-server.keepAliveTimeout = 120000; // 2 minutes
+server.maxConnections = 200;
+server.keepAliveTimeout = 120000;
 
-// Define allowed origins - UPDATED with Render URL
+// Define allowed origins
 const allowedOrigins = [
   "https://www.rvshes.com",
-  "https://rvshes.com",
-  "https://backblaze-backend-p9xu.onrender.com", // ADD THIS LINE
+  "https://rvshes.com", 
+  "https://backblaze-backend-p9xu.onrender.com",
   "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
   "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
   "http://localhost:3000",
   "http://localhost:5173"
 ];
 
-// CRITICAL: Single, comprehensive CORS middleware
+// COMPREHENSIVE CORS MIDDLEWARE - handles all CORS needs
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
-  // Log all requests for debugging
-  console.log(`🌐 Request: ${req.method} ${req.path} from origin: ${origin || 'no-origin'}`);
+  // Log requests for debugging
+  console.log(`🌐 ${req.method} ${req.path} from ${origin || 'no-origin'}`);
   
-  // Always set CORS headers - be very permissive for debugging
-  if (origin) {
-    res.header('Access-Control-Allow-Origin', origin);
-  } else {
-    res.header('Access-Control-Allow-Origin', '*');
-  }
-  
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, Accept, Origin, X-Requested-With');
+  // Set CORS headers - be permissive for debugging
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-upload-id, Cache-Control, Pragma');
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Max-Age', '86400'); // 24 hours preflight cache
+  res.header('Access-Control-Max-Age', '86400');
   
-  // Handle preflight OPTIONS requests immediately
+  // Handle OPTIONS preflight immediately
   if (req.method === 'OPTIONS') {
-    console.log(`✅ Handling OPTIONS preflight for ${req.path} from origin: ${origin || 'no-origin'}`);
+    console.log(`✅ OPTIONS ${req.path}`);
     return res.status(200).end();
   }
   
   next();
 });
 
-// Configure Socket.io with simple CORS settings
-const io = new Server(server, {
-  cors: {
-    origin: true, // Allow all origins for now
-    methods: ["GET", "POST"],
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-upload-id"]
-  },
-  pingTimeout: 60000,
-  pingInterval: 25000
-});
-
-// Make io available to routes
-app.set('io', io);
-
-// Make io available to our status utility
-const statusUtils = require('./utils/status');
-statusUtils.setupSocketIO(io);
-
-// Setup middleware
+// Body parsing middleware
 app.use(express.json({ limit: config.server.bodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: config.server.bodyLimit }));
 
-// Add headers for better debugging
+// Server identification header
 app.use((req, res, next) => {
-  res.setHeader('X-Server-ID', 'backblaze-upload-service');
+  res.setHeader('X-Server-ID', 'rvshes-backend');
+  res.setHeader('X-Powered-By', 'Rvshes Video Platform');
   next();
 });
 
@@ -105,112 +82,169 @@ setupDirectories().catch(err => {
   process.exit(1);
 });
 
-// Start server heartbeat to prevent idle timeouts
+// Configure Socket.io with comprehensive CORS
+const io = new Server(server, {
+  cors: {
+    origin: (origin, callback) => {
+      // Allow all origins for debugging
+      callback(null, true);
+    },
+    methods: ["GET", "POST"],
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "x-upload-id", "Origin"]
+  },
+  allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['websocket', 'polling']
+});
+
+// Make io available to routes and status utility
+app.set('io', io);
+const statusUtils = require('./utils/status');
+statusUtils.setupSocketIO(io);
+
+// Start server heartbeat
 const heartbeat = startHeartbeat();
 
-// Register routes
+// Health check route (before other routes)
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok',
+    service: 'rvshes-backend',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    cors: { allowedOrigins },
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// CORS test endpoints
+app.get('/cors-test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'CORS is working',
+    origin: req.headers.origin || 'Unknown',
+    timestamp: new Date().toISOString(),
+    headers: Object.keys(req.headers)
+  });
+});
+
+// Direct status endpoint (handles the upload status polling)
+app.get('/upload/status/:uploadId', (req, res) => {
+  const { uploadId } = req.params;
+  const origin = req.headers.origin;
+  
+  console.log(`📊 Status check: ${uploadId} from ${origin || 'unknown'}`);
+  
+  try {
+    const status = statusUtils.getUploadStatus(uploadId);
+    
+    if (!status) {
+      console.log(`❌ No status found for: ${uploadId}`);
+      return res.status(404).json({ 
+        error: 'Upload not found',
+        uploadId,
+        message: 'Upload may have expired or completed'
+      });
+    }
+    
+    console.log(`✅ Status found for ${uploadId}:`, {
+      status: status.status,
+      progress: status.progress,
+      stage: status.stage,
+      complete: status.uploadComplete
+    });
+    
+    res.json(status);
+  } catch (error) {
+    console.error(`❌ Status error for ${uploadId}:`, error);
+    res.status(500).json({ 
+      error: 'Status check failed',
+      uploadId,
+      details: error.message
+    });
+  }
+});
+
+// Register route modules
 app.use('/upload', uploadRoutes);
 app.use('/video', videoRoutes);
 app.use('/test', testRoutes);
 
-// Simple health check route
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date(),
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    cors: {
-      allowedOrigins
-    }
-  });
-});
-
-app.get('/test-direct', (req, res) => {
-  res.json({
-    message: 'Direct route works!',
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.get('/cors-test-direct', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Direct CORS test works!',
-    origin: req.headers.origin || 'Unknown',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Add a CORS test endpoint
-app.get('/cors-test', (req, res) => {
-  res.json({
-    success: true,
-    message: 'CORS is properly configured',
-    origin: req.headers.origin || 'Unknown',
-    time: new Date().toISOString()
-  });
-});
-
 // Socket.io connection handling
 io.on('connection', (socket) => {
   const clientId = socket.id;
-  logger.info(`Client connected: ${clientId} from ${socket.handshake.headers.origin || 'Unknown origin'}`);
+  const origin = socket.handshake.headers.origin;
   
-  // Client subscribes to an upload
+  logger.info(`🔌 Client connected: ${clientId} from ${origin || 'unknown'}`);
+  
   socket.on('subscribe', (uploadId) => {
     if (!uploadId) {
-      logger.warn(`Client ${clientId} attempted to subscribe without an uploadId`);
+      logger.warn(`❌ Subscribe without uploadId from ${clientId}`);
       return;
     }
-
-    logger.info(`Client ${clientId} subscribed to upload: ${uploadId}`);
+    
+    logger.info(`📺 Client ${clientId} subscribed to ${uploadId}`);
     socket.join(uploadId);
     
-    // Send current status if available
-    let status = statusUtils.getUploadStatus(uploadId);
-    
-    // Try with normalized ID if original ID not found
-    if (!status && uploadId.startsWith('url_')) {
-      const timestamp = uploadId.split('_')[1];
-      const normalizedId = `upload_${timestamp}`;
-      logger.info(`Trying normalized ID: ${normalizedId}`);
-      status = statusUtils.getUploadStatus(normalizedId);
-    }
-    
+    // Send current status immediately
+    const status = statusUtils.getUploadStatus(uploadId);
     if (status) {
       socket.emit('status', status);
-      logger.debug(`Sent existing status to client ${clientId} for upload ${uploadId}`);
+      logger.info(`📤 Sent current status to ${clientId}:`, {
+        status: status.status,
+        progress: status.progress,
+        complete: status.uploadComplete
+      });
     } else {
-      logger.debug(`No existing status for upload ${uploadId}`);
-      
-      // Send welcome message to confirm connection works
-      socket.emit('welcome', { 
+      // Send welcome message to confirm connection
+      socket.emit('welcome', {
         message: 'Connected to upload service',
-        socketId: socket.id,
+        socketId: clientId,
         timestamp: Date.now()
       });
+      logger.info(`👋 Sent welcome to ${clientId}`);
     }
   });
   
-  // Client unsubscribes from an upload
   socket.on('unsubscribe', (uploadId) => {
     if (uploadId) {
-      logger.info(`Client ${clientId} unsubscribed from upload: ${uploadId}`);
+      logger.info(`📺 Client ${clientId} unsubscribed from ${uploadId}`);
       socket.leave(uploadId);
     }
   });
   
-  // Handle client disconnect
   socket.on('disconnect', (reason) => {
-    logger.info(`Client ${clientId} disconnected: ${reason}`);
+    logger.info(`🔌 Client ${clientId} disconnected: ${reason}`);
   });
   
-  // Handle errors
   socket.on('error', (error) => {
-    logger.error(`Socket error for client ${clientId}:`, error);
+    logger.error(`❌ Socket error for ${clientId}:`, error);
   });
 });
+
+// Debug route registration
+console.log('=== ROUTE REGISTRATION ===');
+app._router.stack.forEach((middleware) => {
+  if (middleware.route) {
+    const methods = Object.keys(middleware.route.methods).join(', ').toUpperCase();
+    console.log(`${methods} ${middleware.route.path}`);
+  } else if (middleware.name === 'router') {
+    const routerBasePath = middleware.regexp.source
+      .replace('\\/?', '')
+      .replace('(?=\\/|$)', '');
+    
+    middleware.handle.stack.forEach((handler) => {
+      if (handler.route) {
+        const methods = Object.keys(handler.route.methods).join(', ').toUpperCase();
+        console.log(`${methods} ${routerBasePath}${handler.route.path}`);
+      }
+    });
+  }
+});
+console.log('=== END ROUTES ===');
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
@@ -218,23 +252,34 @@ app.use(errorHandler);
 // Start the server
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
-  logger.info(`✅ Server running on http://localhost:${port}`);
-  logger.info(`🔌 Socket.IO configured with permissive CORS for debugging`);
+  logger.info(`✅ Rvshes Backend Server running on http://localhost:${port}`);
+  logger.info(`🔌 Socket.IO configured with comprehensive CORS`);
+  logger.info(`📁 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
-// Handle graceful shutdown
+// Graceful shutdown
 process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
+  logger.info('🛑 SIGTERM received - shutting down gracefully');
   
-  // Stop the heartbeat
   if (heartbeat) {
     heartbeat.stop();
   }
   
   server.close(() => {
-    logger.info('HTTP server closed');
+    logger.info('✅ Server closed');
     process.exit(0);
   });
+});
+
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+  logger.error('💥 Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 module.exports = { app, server, io };
