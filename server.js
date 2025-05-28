@@ -29,36 +29,34 @@ const server = http.createServer(app);
 
 // Set server timeout and connection limits
 server.timeout = config.server.timeoutMs;
-server.maxConnections = 200; // Increased for paid plan
+server.maxConnections = 200;
 server.keepAliveTimeout = 120000; // 2 minutes
 
-// Define allowed origins - UPDATED with Render URL
+// Define allowed origins
 const allowedOrigins = [
   "https://www.rvshes.com",
   "https://rvshes.com",
-  "https://backblaze-backend-p9xu.onrender.com", // ADD THIS LINE
+  "https://backblaze-backend-p9xu.onrender.com",
   "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
   "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
   "http://localhost:3000",
   "http://localhost:5173"
 ];
 
-// Add production origins for Render
-if (process.env.NODE_ENV === 'production') {
-  // Add your Render backend URL here when you know it
-  // allowedOrigins.push("https://your-render-app.onrender.com");
-}
-
-// EMERGENCY CORS FIX - Simple, working CORS middleware
+// CRITICAL FIX: Simple, working CORS middleware that handles OPTIONS properly
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
   // Log all requests for debugging
   console.log(`🌐 Request: ${req.method} ${req.path} from origin: ${origin || 'no-origin'}`);
   
-  // Be very permissive with CORS for now
-  if (origin) {
+  // Always set CORS headers for all requests
+  if (origin && allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
+  } else if (origin) {
+    // For development/debugging, allow unknown origins but log them
+    res.header('Access-Control-Allow-Origin', origin);
+    console.log(`⚠️ Unknown origin allowed: ${origin}`);
   } else {
     res.header('Access-Control-Allow-Origin', '*');
   }
@@ -67,9 +65,9 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, Accept, Origin');
   res.header('Access-Control-Allow-Credentials', 'true');
   
-  // Handle preflight OPTIONS requests
+  // CRITICAL: Handle preflight OPTIONS requests immediately and properly
   if (req.method === 'OPTIONS') {
-    console.log(`✅ Handling OPTIONS preflight for ${req.path}`);
+    console.log(`✅ Handling OPTIONS preflight for ${req.path} from origin: ${origin || 'no-origin'}`);
     return res.status(200).end();
   }
   
@@ -79,7 +77,7 @@ app.use((req, res, next) => {
 // Configure Socket.io with simple CORS settings
 const io = new Server(server, {
   cors: {
-    origin: true, // Allow all origins for now
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "x-upload-id"]
@@ -119,7 +117,7 @@ app.use('/upload', uploadRoutes);
 app.use('/video', videoRoutes);
 app.use('/test', testRoutes);
 
-// ADD THIS DEBUGGING SECTION
+// Debug route registration
 console.log('=== REGISTERED ROUTES ===');
 app._router.stack.forEach((middleware) => {
   if (middleware.route) {
@@ -155,12 +153,6 @@ app.get('/test-direct', (req, res) => {
 });
 
 app.get('/cors-test-direct', (req, res) => {
-  // Set CORS headers manually
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
   res.json({
     success: true,
     message: 'Direct CORS test works!',
@@ -177,47 +169,6 @@ app.get('/cors-test', (req, res) => {
     origin: req.headers.origin || 'Unknown',
     time: new Date().toISOString()
   });
-});
-
-// ENHANCED UPLOAD STATUS ROUTE
-app.get('/upload/status/:uploadId', (req, res) => {
-  // Set CORS headers explicitly
-  const origin = req.headers.origin;
-  if (origin) {
-    res.header('Access-Control-Allow-Origin', origin);
-  } else {
-    res.header('Access-Control-Allow-Origin', '*');
-  }
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, Accept');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  const { uploadId } = req.params;
-  console.log(`📊 Status request for upload ${uploadId} from origin: ${origin || 'unknown'}`);
-  
-  try {
-    const { getUploadStatus } = require('./utils/status');
-    const status = getUploadStatus(uploadId);
-    
-    if (!status) {
-      console.log(`❌ Upload status not found for ID: ${uploadId}`);
-      return res.status(404).json({ 
-        error: 'Upload not found',
-        message: 'This upload may have expired or completed already',
-        uploadId: uploadId
-      });
-    }
-    
-    console.log(`✅ Returning status for ${uploadId}:`, status);
-    res.json(status);
-  } catch (error) {
-    console.error('❌ Status route error:', error);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to retrieve upload status',
-      uploadId: uploadId
-    });
-  }
 });
 
 // Socket.io connection handling
@@ -287,7 +238,7 @@ app.use(errorHandler);
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
   logger.info(`✅ Server running on http://localhost:${port}`);
-  logger.info(`🔌 Socket.IO configured with permissive CORS for debugging`);
+  logger.info(`🔌 Socket.IO configured with CORS for: ${allowedOrigins.join(', ')}`);
 });
 
 // Handle graceful shutdown
