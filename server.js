@@ -104,6 +104,21 @@ app.use('/upload', uploadRoutes);
 app.use('/video', videoRoutes);
 app.use('/test', testRoutes);
 
+// ADD THIS DEBUGGING SECTION
+console.log('=== REGISTERED ROUTES ===');
+app._router.stack.forEach((middleware) => {
+  if (middleware.route) {
+    console.log(`${Object.keys(middleware.route.methods).join(', ').toUpperCase()} ${middleware.route.path}`);
+  } else if (middleware.name === 'router') {
+    middleware.handle.stack.forEach((handler) => {
+      if (handler.route) {
+        console.log(`${Object.keys(handler.route.methods).join(', ').toUpperCase()} ${middleware.regexp.source.replace('\\/?', '').replace('(?=\\/|$)', '')}${handler.route.path}`);
+      }
+    });
+  }
+});
+console.log('=== END ROUTES ===');
+
 // Simple health check route
 app.get('/health', (req, res) => {
   res.json({ 
