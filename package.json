@@ -4,12 +4,17 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "dev": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": ["video", "upload", "backblaze", "express", "socket.io", "rushes"],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Video hosting platform backend with Backblaze B2 storage for Rushes",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.4",
     "backblaze-b2": "^1.7.0",
