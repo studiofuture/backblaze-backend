@@ -7,7 +7,7 @@ const cors = require('cors');
 const { setupDirectories } = require('./utils/directory');
 const { validateEnvironment, config } = require('./config');
 const errorHandler = require('./middleware/errorHandler');
-const corsMiddleware = require(__dirname + '/middleware/cors');
+const corsMiddleware = require('./middleware/cors');
 const uploadRoutes = require('./routes/upload');
 const videoRoutes = require('./routes/video');
 const testRoutes = require('./routes/test');
@@ -17,7 +17,7 @@ const { startHeartbeat } = require('./utils/heartbeat');
 // Configure global HTTP agent settings to prevent EPIPE errors
 http.globalAgent.keepAlive = true;
 https.globalAgent.keepAlive = true;
-http.globalAgent.keepAliveMsecs = 60000; // 60 seconds
+http.globalAgent.keepAliveMsecs = 60000;
 https.globalAgent.keepAliveMsecs = 60000;
 
 // Validate environment variables
@@ -29,34 +29,47 @@ const server = http.createServer(app);
 
 // Set server timeout and connection limits
 server.timeout = config.server.timeoutMs;
-server.maxConnections = 100; // Adjust based on your server capacity
-server.keepAliveTimeout = 60000; // 60 seconds, adjust as needed
+server.maxConnections = 200; // Increased for paid plan
+server.keepAliveTimeout = 120000; // 2 minutes
 
-// Define allowed origins
+// Define allowed origins - UPDATED with new domain
 const allowedOrigins = [
+  "https://www.rvshes.com",
+  "https://rvshes.com",
   "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
   "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
   "http://localhost:3000",
-  "http://localhost:5173",
-  "*"  // Allow all origins during development/debugging
+  "http://localhost:5173"
 ];
 
-// Apply CORS middleware FIRST - this is critical for proper CORS handling
+// Add production origins for Render
+if (process.env.NODE_ENV === 'production') {
+  // Add your Render backend URL here when you know it
+  // allowedOrigins.push("https://your-render-app.onrender.com");
+}
+
+// Apply CORS middleware FIRST
 app.use(corsMiddleware);
 
 // Configure Socket.io with proper CORS settings
 const io = new Server(server, {
   cors: {
     origin: function(origin, callback) {
-      // Allow any origin for Socket.io
-      callback(null, true);
+      // Allow requests with no origin (mobile apps, etc.)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
     },
     methods: ["GET", "POST"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "x-upload-id"]
   },
-  pingTimeout: 60000, // Increase ping timeout for better reliability
-  pingInterval: 25000 // How often to ping clients
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 // Make io available to routes
@@ -67,19 +80,11 @@ const statusUtils = require('./utils/status');
 statusUtils.setupSocketIO(io);
 
 // Setup middleware
-// This is a fallback CORS setup - the main one is applied above
-app.use(cors({
-  origin: allowedOrigins,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  credentials: true
-}));
-
 app.use(express.json({ limit: config.server.bodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: config.server.bodyLimit }));
 
 // Add headers for better debugging
 app.use((req, res, next) => {
-  // Add server identity header
   res.setHeader('X-Server-ID', 'backblaze-upload-service');
   next();
 });
