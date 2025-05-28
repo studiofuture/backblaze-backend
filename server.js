@@ -1,5 +1,3 @@
-// Here's your server.js with the exact changes marked:
-
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -31,14 +29,14 @@ const server = http.createServer(app);
 
 // Set server timeout and connection limits
 server.timeout = config.server.timeoutMs;
-server.maxConnections = 200;
-server.keepAliveTimeout = 120000;
+server.maxConnections = 200; // Increased for paid plan
+server.keepAliveTimeout = 120000; // 2 minutes
 
 // Define allowed origins - UPDATED with Render URL
 const allowedOrigins = [
   "https://www.rvshes.com",
   "https://rvshes.com",
-  "https://backblaze-backend-p9xu.onrender.com",
+  "https://backblaze-backend-p9xu.onrender.com", // ADD THIS LINE
   "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
   "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
   "http://localhost:3000",
@@ -51,12 +49,7 @@ if (process.env.NODE_ENV === 'production') {
   // allowedOrigins.push("https://your-render-app.onrender.com");
 }
 
-// ==================== STEP 1: COMMENT OUT THIS LINE ====================
-// Apply CORS middleware FIRST
-// app.use(corsMiddleware); // <-- COMMENT OUT OR DELETE THIS LINE
-
-// ==================== STEP 2: ADD THIS NEW CORS MIDDLEWARE HERE ====================
-// EMERGENCY CORS FIX - Add this right after the corsMiddleware line above
+// EMERGENCY CORS FIX - Simple, working CORS middleware
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
@@ -83,32 +76,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ==================== STEP 3: REPLACE YOUR SOCKET.IO CONFIGURATION ====================
-// Configure Socket.io with proper CORS settings
-// FIND THIS SECTION AND REPLACE IT:
-/*
-const io = new Server(server, {
-  cors: {
-    origin: function(origin, callback) {
-      // Allow requests with no origin (mobile apps, etc.)
-      if (!origin) return callback(null, true);
-      
-      if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
-    methods: ["GET", "POST"],
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-upload-id"]
-  },
-  pingTimeout: 60000,
-  pingInterval: 25000
-});
-*/
-
-// REPLACE WITH THIS SIMPLER VERSION:
+// Configure Socket.io with simple CORS settings
 const io = new Server(server, {
   cors: {
     origin: true, // Allow all origins for now
@@ -211,37 +179,7 @@ app.get('/cors-test', (req, res) => {
   });
 });
 
-// ==================== STEP 4: REPLACE YOUR STATUS ROUTE ====================
-// FIND THIS SECTION:
-/*
-// WORKING UPLOAD STATUS ROUTE - ADD THIS
-app.get('/upload/status/:uploadId', (req, res) => {
-  // Set CORS headers first
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  const { uploadId } = req.params;
-  logger.info(`Status request for upload ${uploadId}`);
-  
-  try {
-    const { getUploadStatus } = require('./utils/status');
-    const status = getUploadStatus(uploadId);
-    
-    if (!status) {
-      return res.status(404).json({ error: 'Upload not found' });
-    }
-    
-    res.json(status);
-  } catch (error) {
-    logger.error('Status route error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-*/
-
-// REPLACE WITH THIS ENHANCED VERSION:
+// ENHANCED UPLOAD STATUS ROUTE
 app.get('/upload/status/:uploadId', (req, res) => {
   // Set CORS headers explicitly
   const origin = req.headers.origin;
@@ -287,7 +225,59 @@ io.on('connection', (socket) => {
   const clientId = socket.id;
   logger.info(`Client connected: ${clientId} from ${socket.handshake.headers.origin || 'Unknown origin'}`);
   
-  // ... rest of your socket handling code stays the same ...
+  // Client subscribes to an upload
+  socket.on('subscribe', (uploadId) => {
+    if (!uploadId) {
+      logger.warn(`Client ${clientId} attempted to subscribe without an uploadId`);
+      return;
+    }
+
+    logger.info(`Client ${clientId} subscribed to upload: ${uploadId}`);
+    socket.join(uploadId);
+    
+    // Send current status if available
+    let status = statusUtils.getUploadStatus(uploadId);
+    
+    // Try with normalized ID if original ID not found
+    if (!status && uploadId.startsWith('url_')) {
+      const timestamp = uploadId.split('_')[1];
+      const normalizedId = `upload_${timestamp}`;
+      logger.info(`Trying normalized ID: ${normalizedId}`);
+      status = statusUtils.getUploadStatus(normalizedId);
+    }
+    
+    if (status) {
+      socket.emit('status', status);
+      logger.debug(`Sent existing status to client ${clientId} for upload ${uploadId}`);
+    } else {
+      logger.debug(`No existing status for upload ${uploadId}`);
+      
+      // Send welcome message to confirm connection works
+      socket.emit('welcome', { 
+        message: 'Connected to upload service',
+        socketId: socket.id,
+        timestamp: Date.now()
+      });
+    }
+  });
+  
+  // Client unsubscribes from an upload
+  socket.on('unsubscribe', (uploadId) => {
+    if (uploadId) {
+      logger.info(`Client ${clientId} unsubscribed from upload: ${uploadId}`);
+      socket.leave(uploadId);
+    }
+  });
+  
+  // Handle client disconnect
+  socket.on('disconnect', (reason) => {
+    logger.info(`Client ${clientId} disconnected: ${reason}`);
+  });
+  
+  // Handle errors
+  socket.on('error', (error) => {
+    logger.error(`Socket error for client ${clientId}:`, error);
+  });
 });
 
 // Error handling middleware (must be last)
@@ -297,7 +287,7 @@ app.use(errorHandler);
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
   logger.info(`✅ Server running on http://localhost:${port}`);
-  logger.info(`🔌 Socket.IO configured with origins: ${allowedOrigins.join(', ')}`);
+  logger.info(`🔌 Socket.IO configured with permissive CORS for debugging`);
 });
 
 // Handle graceful shutdown
