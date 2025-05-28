@@ -23,16 +23,33 @@ const { config } = require('../config');
  * GET /upload/status/:uploadId
  */
 router.get('/status/:uploadId', (req, res) => {
+  // Set CORS headers explicitly
+  const origin = req.headers.origin;
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, Accept');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
   const { uploadId } = req.params;
   
   // Add debug logging
-  logger.info(`Status request for upload ${uploadId} from origin: ${req.headers.origin || 'unknown'}`);
+  console.log(`📊 Status request for upload ${uploadId} from origin: ${origin || 'unknown'}`);
   
   const status = getUploadStatus(uploadId);
   if (!status) {
-    return res.status(404).json({ error: 'Upload not found' });
+    console.log(`❌ Upload status not found for ID: ${uploadId}`);
+    return res.status(404).json({ 
+      error: 'Upload not found',
+      message: 'This upload may have expired or completed already',
+      uploadId: uploadId
+    });
   }
   
+  console.log(`✅ Returning status for ${uploadId}:`, status);
   res.json(status);
 });
 
