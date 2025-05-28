@@ -2,16 +2,14 @@ services:
   - type: web
     name: rushes-backend
     env: node
-    buildCommand: ./build.sh
+    buildCommand: chmod +x ./build.sh && ./build.sh
     startCommand: npm start
-    plan: free
+    plan: starter
     envVars:
       - key: NODE_ENV
         value: production
-    disk:
-      name: uploads
-      mountPath: /opt/render/project/src/uploads
-      sizeGB: 1
+      - key: LOG_LEVEL
+        value: INFO
     healthCheckPath: /health
     autoDeploy: false
     scaling:
