@@ -164,6 +164,27 @@ app.get('/cors-test', (req, res) => {
   });
 });
 
+// ADD THIS CRITICAL UPLOAD STATUS ROUTE
+app.get('/upload/status/:uploadId', (req, res) => {
+  // Set CORS headers
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  const { uploadId } = req.params;
+  
+  // Get status
+  const { getUploadStatus } = require('./utils/status');
+  const status = getUploadStatus(uploadId);
+  
+  if (!status) {
+    return res.status(404).json({ error: 'Upload not found' });
+  }
+  
+  res.json(status);
+});
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   const clientId = socket.id;
