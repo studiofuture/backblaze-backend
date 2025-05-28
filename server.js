@@ -241,84 +241,16 @@ app.get('/upload/status/:uploadId', (req, res) => {
   }
 });
 
+// =============================================================================  
+// UPLOAD ROUTES - Import the real upload routes
 // =============================================================================
-// MOCK UPLOAD ROUTE FOR TESTING
-// FIXED: Uses consistent timestamp for both uploadId and filename
-// =============================================================================
-app.post('/upload/video', express.raw({ limit: '100mb', type: '*/*' }), (req, res) => {
-  // FIXED: Generate timestamp ONCE and use it for both ID and filename
-  const timestamp = Date.now();
-  const uploadId = `upload_${timestamp}`;
-  
-  console.log(`🎬 MOCK VIDEO UPLOAD: ${uploadId}`);
-  console.log(`📁 Content-Length: ${req.headers['content-length']} bytes`);
-  
-  // Use the SAME timestamp for the video URL
-  const videoUrl = `https://rushes-videos.s3.eu-central-003.backblazeb2.com/test-video-${timestamp}.mp4`;
-  
-  // Initialize status
-  initUploadStatus(uploadId, {
-    filename: `test-video-${timestamp}.mp4`,
-    videoUrl: videoUrl
-  });
-  
-  // Return immediate response with consistent timestamp
-  res.json({ 
-    status: "processing", 
-    uploadId,
-    url: videoUrl
-  });
-  
-  // Simulate background processing
-  simulateVideoProcessing(uploadId);
-});
-
-// Simulate video processing - UPDATED to use consistent timestamps
-function simulateVideoProcessing(uploadId) {
-  console.log(`🔄 SIMULATING PROCESSING: ${uploadId}`);
-  
-  // Extract timestamp from uploadId for consistent naming
-  const timestamp = uploadId.split('_')[1];
-  
-  setTimeout(() => {
-    updateUploadStatus(uploadId, {
-      stage: 'extracting metadata',
-      progress: 10
-    });
-  }, 1000);
-  
-  setTimeout(() => {
-    updateUploadStatus(uploadId, {
-      stage: 'generating thumbnail',
-      progress: 30
-    });
-  }, 3000);
-  
-  setTimeout(() => {
-    updateUploadStatus(uploadId, {
-      stage: 'uploading to cloud storage',
-      progress: 60
-    });
-  }, 5000);
-  
-  setTimeout(() => {
-    updateUploadStatus(uploadId, {
-      stage: 'finalizing upload',
-      progress: 90
-    });
-  }, 8000);
-  
-  setTimeout(() => {
-    completeUploadStatus(uploadId, {
-      videoUrl: `https://rushes-videos.s3.eu-central-003.backblazeb2.com/test-video-${timestamp}.mp4`,
-      thumbnailUrl: `https://rushes-thumbnails.s3.eu-central-003.backblazeb2.com/test-thumb-${timestamp}.jpg`,
-      metadata: {
-        duration: 120,
-        width: 1280,
-        height: 720
-      }
-    });
-  }, 10000);
+try {
+  const uploadRoutes = require('./routes/upload');
+  app.use('/upload', uploadRoutes);
+  console.log('✅ Upload routes loaded successfully');
+} catch (error) {
+  console.error('❌ Failed to load upload routes:', error.message);
+  console.log('📝 Make sure ./routes/upload.js exists and exports properly');
 }
 
 // =============================================================================
@@ -389,8 +321,7 @@ app.use('*', (req, res) => {
       'GET /health',
       'GET /cors-test',
       'GET /debug-routes',
-      'GET /upload/status/:uploadId',
-      'POST /upload/video'
+      'GET /upload/status/:uploadId'
     ]
   });
 });
