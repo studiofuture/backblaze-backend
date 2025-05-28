@@ -5,6 +5,19 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 
+// Import status functions from utils
+const { 
+  setupSocketIO,
+  getUploadStatus, 
+  initUploadStatus, 
+  updateUploadStatus, 
+  completeUploadStatus, 
+  failUploadStatus 
+} = require('./utils/status');
+
+// Import config validation
+const { validateEnvironment } = require('./config');
+
 // Create Express app
 const app = express();
 const server = http.createServer(app);
@@ -22,8 +35,8 @@ const io = new Server(server, {
   transports: ['websocket', 'polling']
 });
 
-// Store upload statuses in memory
-const uploadStatuses = new Map();
+// Initialize socket.io in the status utility
+setupSocketIO(io);
 
 // COMPREHENSIVE CORS MIDDLEWARE
 app.use((req, res, next) => {
@@ -50,79 +63,6 @@ app.use((req, res, next) => {
 // Body parsing
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
-
-// Status utility functions
-function initUploadStatus(uploadId, initialData = {}) {
-  const status = {
-    uploadId,
-    status: 'processing',
-    progress: 0,
-    stage: 'initializing',
-    uploadComplete: false,
-    error: null,
-    createdAt: new Date().toISOString(),
-    ...initialData
-  };
-  
-  uploadStatuses.set(uploadId, status);
-  console.log(`📊 INIT STATUS: ${uploadId}`, status);
-  
-  // Emit via socket
-  io.to(uploadId).emit('status', status);
-  return status;
-}
-
-function updateUploadStatus(uploadId, updates) {
-  const current = uploadStatuses.get(uploadId);
-  if (!current) {
-    console.log(`⚠️ UPDATE STATUS: ${uploadId} not found`);
-    return null;
-  }
-  
-  const updated = { ...current, ...updates, updatedAt: new Date().toISOString() };
-  uploadStatuses.set(uploadId, updated);
-  
-  console.log(`📊 UPDATE STATUS: ${uploadId}`, {
-    status: updated.status,
-    progress: updated.progress,
-    stage: updated.stage
-  });
-  
-  // Emit via socket
-  io.to(uploadId).emit('status', updated);
-  return updated;
-}
-
-function completeUploadStatus(uploadId, finalData = {}) {
-  const current = uploadStatuses.get(uploadId);
-  if (!current) return null;
-  
-  const completed = {
-    ...current,
-    ...finalData,
-    status: 'completed',
-    progress: 100,
-    uploadComplete: true,
-    completedAt: new Date().toISOString()
-  };
-  
-  uploadStatuses.set(uploadId, completed);
-  
-  console.log(`🎉 COMPLETE STATUS: ${uploadId}`, {
-    status: completed.status,
-    uploadComplete: completed.uploadComplete
-  });
-  
-  // Emit completion
-  io.to(uploadId).emit('status', completed);
-  io.to(uploadId).emit('complete', completed);
-  
-  return completed;
-}
-
-function getUploadStatus(uploadId) {
-  return uploadStatuses.get(uploadId) || null;
-}
 
 // =============================================================================
 // ROUTES
@@ -177,13 +117,12 @@ app.get('/debug-routes', (req, res) => {
     message: 'All registered routes',
     routes,
     totalRoutes: routes.length,
-    port: process.env.PORT,
-    uploadStatuses: Array.from(uploadStatuses.keys())
+    port: process.env.PORT
   });
 });
 
 // =============================================================================
-// UPLOAD STATUS ROUTE - The one that was failing!
+// UPLOAD STATUS ROUTE
 // =============================================================================
 app.get('/upload/status/:uploadId', (req, res) => {
   const { uploadId } = req.params;
@@ -251,6 +190,7 @@ try {
 } catch (error) {
   console.error('❌ Failed to load upload routes:', error.message);
   console.log('📝 Make sure ./routes/upload.js exists and exports properly');
+  console.error('Full error:', error);
 }
 
 // =============================================================================
@@ -325,6 +265,14 @@ app.use('*', (req, res) => {
     ]
   });
 });
+
+// Validate environment before starting
+try {
+  validateEnvironment();
+} catch (error) {
+  console.error('❌ Environment validation failed:', error.message);
+  process.exit(1);
+}
 
 // Start server
 const port = process.env.PORT || 3000;
