@@ -5,11 +5,10 @@ const logger = require('../utils/logger');
  * This ensures CORS headers are set consistently across all routes
  */
 function corsMiddleware(req, res, next) {
-  // Define allowed origins - UPDATED with Render backend URL
+  // Define allowed origins
   const allowedOrigins = [
     "https://www.rvshes.com",
-    "https://rvshes.com", 
-    "https://backblaze-backend-p9xu.onrender.com", // ADD THIS LINE
+    "https://rvshes.com",
     "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
     "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
     "http://localhost:3000",
@@ -19,14 +18,19 @@ function corsMiddleware(req, res, next) {
   // Get origin from request
   const origin = req.headers.origin;
   
-  // SIMPLIFIED CORS LOGIC - be more permissive
+  // Handle CORS headers
   if (origin && allowedOrigins.includes(origin)) {
+    // Known origin - allow it
     res.header('Access-Control-Allow-Origin', origin);
+  } else if (!origin) {
+    // No origin (direct requests, server-to-server, etc.) - allow all
+    res.header('Access-Control-Allow-Origin', '*');
   } else if (process.env.NODE_ENV !== 'production') {
+    // Development - allow all
     res.header('Access-Control-Allow-Origin', '*');
   } else {
-    // Still allow the request but log it
-    res.header('Access-Control-Allow-Origin', origin || '*');
+    // Production unknown origin - still allow but log
+    res.header('Access-Control-Allow-Origin', origin);
     logger.warn(`CORS request from unrecognized origin: ${origin}`);
   }
   
@@ -35,12 +39,9 @@ function corsMiddleware(req, res, next) {
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, Accept');
   res.header('Access-Control-Allow-Credentials', 'true');
   
-  // Log the request for debugging
-  logger.debug(`CORS: ${req.method} ${req.path} from ${origin || 'unknown'}`);
-  
   // Handle preflight OPTIONS requests immediately
   if (req.method === 'OPTIONS') {
-    logger.info(`CORS preflight: ${req.path} from ${origin || 'unknown'}`);
+    logger.debug(`CORS preflight: ${req.path} from ${origin || 'no-origin'}`);
     return res.status(200).end();
   }
   
