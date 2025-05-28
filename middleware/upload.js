@@ -46,10 +46,12 @@ const fileFilter = (req, file, cb) => {
   cb(null, true);
 };
 
-// Configure upload limits
+// Configure upload limits - UPDATED for paid plan with very high limits
 const limits = {
-  fileSize: 10 * 1024 * 1024 * 1024, // 1GB max file size
-  files: 1 // Maximum number of files per request
+  fileSize: 100 * 1024 * 1024 * 1024, // 100GB max file size for paid plan
+  files: 1, // Maximum number of files per request
+  fieldSize: 100 * 1024 * 1024, // 100MB field size
+  fields: 50 // Maximum number of fields
 };
 
 // Create multer instance
