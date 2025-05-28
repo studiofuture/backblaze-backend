@@ -32,10 +32,11 @@ server.timeout = config.server.timeoutMs;
 server.maxConnections = 200; // Increased for paid plan
 server.keepAliveTimeout = 120000; // 2 minutes
 
-// Define allowed origins - UPDATED with new domain
+// Define allowed origins - UPDATED with Render URL
 const allowedOrigins = [
   "https://www.rvshes.com",
   "https://rvshes.com",
+  "https://backblaze-backend-p9xu.onrender.com", // ADD THIS LINE
   "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
   "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
   "http://localhost:3000",
