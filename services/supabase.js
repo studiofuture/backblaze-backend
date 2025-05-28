@@ -51,7 +51,7 @@ async function updateVideoMetadata(videoId, metadata) {
       serviceClient = initServiceClient();
     }
     
-    // If we have a service client, use it first (has higher permissions)
+    // If we have a service client, use it
     if (serviceClient) {
       try {
         const { data, error } = await serviceClient
@@ -69,46 +69,17 @@ async function updateVideoMetadata(videoId, metadata) {
           
         if (error) {
           logger.error(`[Supabase] Service client error updating video:`, error);
-          // Fall through to try the regular client
+          return false;
         } else {
           logger.info(`[Supabase] Service client updated video successfully:`, data);
           return true;
         }
       } catch (serviceError) {
         logger.error(`[Supabase] Service client error:`, serviceError);
-        // Fall through to try the regular client
-      }
-    }
-    
-    // Fallback to regular client from integrations
-    try {
-      // Attempt to import from your integration file
-      const { supabase } = require('../integrations/supabase/server');
-      
-      // Update the videos table
-      const { data, error } = await supabase
-        .from('videos')
-        .update({
-          url: metadata.url,
-          thumbnail_url: metadata.thumbnailUrl,
-          duration: Math.round(metadata.duration || 0),
-          width: metadata.width || 0,
-          height: metadata.height || 0,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', videoId)
-        .select();
-          
-      if (error) {
-        logger.error(`[Supabase] Error updating video:`, error);
         return false;
       }
-      
-      logger.info(`[Supabase] Updated video successfully:`, data);
-      return true;
-    } catch (importError) {
-      // If we can't import the Supabase client, log that it's not available
-      logger.info(`[Supabase] Integration not available:`, importError.message);
+    } else {
+      logger.info(`[Supabase] Service client not available, skipping database update`);
       return false;
     }
   } catch (error) {
@@ -146,13 +117,9 @@ async function isSupabaseAvailable() {
     return true;
   }
   
-  // Otherwise try the regular integration
-  try {
-    const { supabase } = require('../integrations/supabase/server');
-    return !!supabase;
-  } catch (error) {
-    return false;
-  }
+  // Try to initialize service client
+  const client = initServiceClient();
+  return !!client;
 }
 
 module.exports = {
