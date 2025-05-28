@@ -17,27 +17,15 @@ const supabaseService = require('../services/supabase');
 const logger = require('../utils/logger');
 const { config } = require('../config');
 
-
 /**
  * Get upload status
  * GET /upload/status/:uploadId
  */
 router.get('/status/:uploadId', (req, res) => {
-  // Set CORS headers explicitly
-  const origin = req.headers.origin;
-  if (origin) {
-    res.header('Access-Control-Allow-Origin', origin);
-  } else {
-    res.header('Access-Control-Allow-Origin', '*');
-  }
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, Accept');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
   const { uploadId } = req.params;
   
   // Add debug logging
-  console.log(`📊 Status request for upload ${uploadId} from origin: ${origin || 'unknown'}`);
+  console.log(`📊 Status request for upload ${uploadId} from origin: ${req.headers.origin || 'unknown'}`);
   
   const status = getUploadStatus(uploadId);
   if (!status) {
@@ -53,7 +41,6 @@ router.get('/status/:uploadId', (req, res) => {
   res.json(status);
 });
 
-// The rest of your file remains unchanged
 /**
  * Upload video to Backblaze (with thumbnail extraction and metadata)
  * POST /upload/video
