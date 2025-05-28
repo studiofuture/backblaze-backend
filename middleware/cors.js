@@ -5,8 +5,10 @@ const logger = require('../utils/logger');
  * This ensures CORS headers are set consistently across all routes
  */
 function corsMiddleware(req, res, next) {
-  // Define allowed origins
+  // Define allowed origins - UPDATED with new domain
   const allowedOrigins = [
+    "https://www.rvshes.com",
+    "https://rvshes.com",
     "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
     "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
     "http://localhost:3000",
@@ -17,11 +19,13 @@ function corsMiddleware(req, res, next) {
   const origin = req.headers.origin;
   
   // Set CORS headers - either match the specific origin or use * during development
-  // During production, you might want to only allow specific origins
   if (origin && (allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production')) {
     res.header('Access-Control-Allow-Origin', origin);
-  } else {
+  } else if (process.env.NODE_ENV !== 'production') {
     res.header('Access-Control-Allow-Origin', '*');
+  } else {
+    // In production, be more restrictive
+    res.header('Access-Control-Allow-Origin', allowedOrigins[0]); // Default to main domain
   }
   
   // Set other CORS headers
