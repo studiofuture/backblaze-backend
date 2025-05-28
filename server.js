@@ -2,11 +2,19 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 
-// MINIMAL EXPRESS APP FOR DEBUGGING
+// DEBUG THE PORT ISSUE
+console.log('🔥🔥🔥 PORT DEBUGGING 🔥🔥🔥');
+console.log('process.env.PORT:', process.env.PORT);
+console.log('process.env.NODE_ENV:', process.env.NODE_ENV);
+console.log('All PORT-related env vars:');
+Object.keys(process.env)
+  .filter(key => key.toLowerCase().includes('port'))
+  .forEach(key => console.log(`${key}: ${process.env[key]}`));
+
 const app = express();
 const server = http.createServer(app);
 
-// SUPER SIMPLE CORS - no fancy stuff
+// SUPER SIMPLE CORS
 app.use((req, res, next) => {
   console.log(`🔥 REQUEST: ${req.method} ${req.url} from ${req.headers.origin || 'no-origin'}`);
   
@@ -24,25 +32,32 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// TEST ROUTES - SUPER SIMPLE
+// SIMPLE TEST ROUTES
 app.get('/', (req, res) => {
-  console.log('🔥 ROOT ROUTE HIT');
-  res.json({ message: 'Root works!' });
+  console.log('🔥 ROOT ROUTE HIT - SUCCESS!');
+  res.json({ 
+    message: 'Root works!',
+    port: process.env.PORT,
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV
+  });
+});
+
+app.get('/health', (req, res) => {
+  console.log('🔥 HEALTH ROUTE HIT');
+  res.json({ 
+    status: 'ok',
+    port: process.env.PORT,
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.get('/test', (req, res) => {
   console.log('🔥 TEST ROUTE HIT');
-  res.json({ message: 'Test route works!' });
-});
-
-app.get('/upload/test', (req, res) => {
-  console.log('🔥 UPLOAD/TEST ROUTE HIT');
-  res.json({ message: 'Upload test route works!' });
-});
-
-app.get('/upload/status/test', (req, res) => {
-  console.log('🔥 UPLOAD/STATUS/TEST ROUTE HIT');
-  res.json({ message: 'Upload status test route works!' });
+  res.json({ 
+    message: 'Test route works!',
+    port: process.env.PORT
+  });
 });
 
 app.get('/upload/status/:uploadId', (req, res) => {
@@ -50,38 +65,44 @@ app.get('/upload/status/:uploadId', (req, res) => {
   res.json({ 
     message: 'Status route works!',
     uploadId: req.params.uploadId,
+    port: process.env.PORT,
     timestamp: new Date().toISOString()
   });
 });
 
-// CATCH ALL ROUTE
-app.get('*', (req, res) => {
-  console.log(`🔥 CATCH ALL HIT: ${req.url}`);
+// CATCH ALL - SHOULD BE LAST
+app.use('*', (req, res) => {
+  console.log(`🔥 CATCH ALL HIT: ${req.method} ${req.originalUrl}`);
   res.status(404).json({ 
     error: 'Route not found',
-    path: req.url,
-    method: req.method
+    path: req.originalUrl,
+    method: req.method,
+    port: process.env.PORT
   });
 });
 
-// LIST ALL ROUTES
-console.log('🔥 REGISTERED ROUTES:');
-app._router.stack.forEach((middleware) => {
-  if (middleware.route) {
-    const methods = Object.keys(middleware.route.methods).join(', ').toUpperCase();
-    console.log(`🔥 ${methods} ${middleware.route.path}`);
-  }
+// FORCE THE CORRECT PORT
+const port = process.env.PORT || 3000;
+
+// MAKE SURE WE'RE LISTENING ON ALL INTERFACES
+server.listen(port, '0.0.0.0', () => {
+  console.log(`🔥🔥🔥 SERVER SUCCESSFULLY STARTED 🔥🔥🔥`);
+  console.log(`🔥 Port: ${port}`);
+  console.log(`🔥 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔥 Listening on: 0.0.0.0:${port}`);
+  console.log(`🔥🔥🔥 TEST THESE URLS 🔥🔥🔥`);
+  console.log(`🔥 Root: https://backblaze-backend-22ih.onrender.com/`);
+  console.log(`🔥 Health: https://backblaze-backend-22ih.onrender.com/health`);
+  console.log(`🔥 Test: https://backblaze-backend-22ih.onrender.com/test`);
+  console.log(`🔥 Status: https://backblaze-backend-22ih.onrender.com/upload/status/test123`);
 });
 
-const port = process.env.PORT || 3000;
-server.listen(port, () => {
-  console.log(`🔥 NUCLEAR DEBUG SERVER RUNNING ON PORT ${port}`);
-  console.log(`🔥 Test these URLs:`);
-  console.log(`🔥 - /`);
-  console.log(`🔥 - /test`);
-  console.log(`🔥 - /upload/test`);
-  console.log(`🔥 - /upload/status/test`);
-  console.log(`🔥 - /upload/status/upload_123456789`);
+// ERROR HANDLING
+server.on('error', (error) => {
+  console.error('🔥 SERVER ERROR:', error);
+  if (error.code === 'EADDRINUSE') {
+    console.error(`🔥 Port ${port} is already in use`);
+  }
 });
 
 module.exports = { app, server };
