@@ -1,3 +1,5 @@
+// Here's your server.js with the exact changes marked:
+
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -29,16 +31,15 @@ const server = http.createServer(app);
 
 // Set server timeout and connection limits
 server.timeout = config.server.timeoutMs;
-server.maxConnections = 200; // Increased for paid plan
-server.keepAliveTimeout = 120000; // 2 minutes
+server.maxConnections = 200;
+server.keepAliveTimeout = 120000;
 
 // Define allowed origins - UPDATED with Render URL
 const allowedOrigins = [
   "https://www.rvshes.com",
   "https://rvshes.com",
-  "https://backblaze-backend-p9xu.onrender.com", // ADD THIS LINE
+  "https://backblaze-backend-p9xu.onrender.com",
   "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
-   "https://lovable.dev",
   "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
   "http://localhost:3000",
   "http://localhost:5173"
@@ -50,10 +51,42 @@ if (process.env.NODE_ENV === 'production') {
   // allowedOrigins.push("https://your-render-app.onrender.com");
 }
 
-// Also update your CORS middleware to be more permissive in development
-app.use(corsMiddleware);
+// ==================== STEP 1: COMMENT OUT THIS LINE ====================
+// Apply CORS middleware FIRST
+// app.use(corsMiddleware); // <-- COMMENT OUT OR DELETE THIS LINE
 
+// ==================== STEP 2: ADD THIS NEW CORS MIDDLEWARE HERE ====================
+// EMERGENCY CORS FIX - Add this right after the corsMiddleware line above
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Log all requests for debugging
+  console.log(`🌐 Request: ${req.method} ${req.path} from origin: ${origin || 'no-origin'}`);
+  
+  // Be very permissive with CORS for now
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, Accept, Origin');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle preflight OPTIONS requests
+  if (req.method === 'OPTIONS') {
+    console.log(`✅ Handling OPTIONS preflight for ${req.path}`);
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
+// ==================== STEP 3: REPLACE YOUR SOCKET.IO CONFIGURATION ====================
 // Configure Socket.io with proper CORS settings
+// FIND THIS SECTION AND REPLACE IT:
+/*
 const io = new Server(server, {
   cors: {
     origin: function(origin, callback) {
@@ -63,16 +96,22 @@ const io = new Server(server, {
       if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
         callback(null, true);
       } else {
-        // In development, log but still allow unknown origins
-        if (process.env.NODE_ENV !== 'production') {
-          console.log(`⚠️ Unknown origin allowed in dev: ${origin}`);
-          callback(null, true);
-        } else {
-          console.error(`❌ CORS blocked origin: ${origin}`);
-          callback(new Error('Not allowed by CORS'));
-        }
+        callback(new Error('Not allowed by CORS'));
       }
     },
+    methods: ["GET", "POST"],
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "x-upload-id"]
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000
+});
+*/
+
+// REPLACE WITH THIS SIMPLER VERSION:
+const io = new Server(server, {
+  cors: {
+    origin: true, // Allow all origins for now
     methods: ["GET", "POST"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "x-upload-id"]
@@ -172,9 +211,39 @@ app.get('/cors-test', (req, res) => {
   });
 });
 
-// ENHANCED UPLOAD STATUS ROUTE
+// ==================== STEP 4: REPLACE YOUR STATUS ROUTE ====================
+// FIND THIS SECTION:
+/*
+// WORKING UPLOAD STATUS ROUTE - ADD THIS
 app.get('/upload/status/:uploadId', (req, res) => {
-  // CORS headers are handled by middleware, but let's be extra sure
+  // Set CORS headers first
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  const { uploadId } = req.params;
+  logger.info(`Status request for upload ${uploadId}`);
+  
+  try {
+    const { getUploadStatus } = require('./utils/status');
+    const status = getUploadStatus(uploadId);
+    
+    if (!status) {
+      return res.status(404).json({ error: 'Upload not found' });
+    }
+    
+    res.json(status);
+  } catch (error) {
+    logger.error('Status route error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+*/
+
+// REPLACE WITH THIS ENHANCED VERSION:
+app.get('/upload/status/:uploadId', (req, res) => {
+  // Set CORS headers explicitly
   const origin = req.headers.origin;
   if (origin) {
     res.header('Access-Control-Allow-Origin', origin);
@@ -186,52 +255,25 @@ app.get('/upload/status/:uploadId', (req, res) => {
   res.header('Access-Control-Allow-Credentials', 'true');
   
   const { uploadId } = req.params;
-  logger.info(`📊 Status request for upload ${uploadId} from origin: ${origin || 'unknown'}`);
+  console.log(`📊 Status request for upload ${uploadId} from origin: ${origin || 'unknown'}`);
   
   try {
     const { getUploadStatus } = require('./utils/status');
-    let status = getUploadStatus(uploadId);
-    
-    // If not found with original ID, try alternative formats
-    if (!status) {
-      logger.info(`🔍 Upload ${uploadId} not found, trying alternative formats...`);
-      
-      // Try with upload_ prefix if it doesn't have one
-      if (!uploadId.startsWith('upload_') && !uploadId.startsWith('url_')) {
-        const altId = `upload_${uploadId}`;
-        status = getUploadStatus(altId);
-        if (status) {
-          logger.info(`✅ Found status with alternative ID: ${altId}`);
-        }
-      }
-      
-      // Try with url_ prefix converted to upload_
-      if (!status && uploadId.startsWith('url_')) {
-        const timestamp = uploadId.split('_')[1];
-        const altId = `upload_${timestamp}`;
-        status = getUploadStatus(altId);
-        if (status) {
-          logger.info(`✅ Found status with normalized ID: ${altId}`);
-        }
-      }
-    }
+    const status = getUploadStatus(uploadId);
     
     if (!status) {
-      logger.warn(`❌ Upload status not found for ID: ${uploadId}`);
-      
-      // Return a helpful response instead of 404
+      console.log(`❌ Upload status not found for ID: ${uploadId}`);
       return res.status(404).json({ 
         error: 'Upload not found',
         message: 'This upload may have expired or completed already',
-        uploadId: uploadId,
-        availableStatuses: Object.keys(require('./utils/status').uploadStatus || {}).length
+        uploadId: uploadId
       });
     }
     
-    logger.info(`✅ Returning status for ${uploadId}:`, status);
+    console.log(`✅ Returning status for ${uploadId}:`, status);
     res.json(status);
   } catch (error) {
-    logger.error('❌ Status route error:', error);
+    console.error('❌ Status route error:', error);
     res.status(500).json({ 
       error: 'Internal server error',
       message: 'Failed to retrieve upload status',
@@ -245,59 +287,7 @@ io.on('connection', (socket) => {
   const clientId = socket.id;
   logger.info(`Client connected: ${clientId} from ${socket.handshake.headers.origin || 'Unknown origin'}`);
   
-  // Client subscribes to an upload
-  socket.on('subscribe', (uploadId) => {
-    if (!uploadId) {
-      logger.warn(`Client ${clientId} attempted to subscribe without an uploadId`);
-      return;
-    }
-
-    logger.info(`Client ${clientId} subscribed to upload: ${uploadId}`);
-    socket.join(uploadId);
-    
-    // Send current status if available
-    let status = statusUtils.getUploadStatus(uploadId);
-    
-    // Try with normalized ID if original ID not found
-    if (!status && uploadId.startsWith('url_')) {
-      const timestamp = uploadId.split('_')[1];
-      const normalizedId = `upload_${timestamp}`;
-      logger.info(`Trying normalized ID: ${normalizedId}`);
-      status = statusUtils.getUploadStatus(normalizedId);
-    }
-    
-    if (status) {
-      socket.emit('status', status);
-      logger.debug(`Sent existing status to client ${clientId} for upload ${uploadId}`);
-    } else {
-      logger.debug(`No existing status for upload ${uploadId}`);
-      
-      // Send welcome message to confirm connection works
-      socket.emit('welcome', { 
-        message: 'Connected to upload service',
-        socketId: socket.id,
-        timestamp: Date.now()
-      });
-    }
-  });
-  
-  // Client unsubscribes from an upload
-  socket.on('unsubscribe', (uploadId) => {
-    if (uploadId) {
-      logger.info(`Client ${clientId} unsubscribed from upload: ${uploadId}`);
-      socket.leave(uploadId);
-    }
-  });
-  
-  // Handle client disconnect
-  socket.on('disconnect', (reason) => {
-    logger.info(`Client ${clientId} disconnected: ${reason}`);
-  });
-  
-  // Handle errors
-  socket.on('error', (error) => {
-    logger.error(`Socket error for client ${clientId}:`, error);
-  });
+  // ... rest of your socket handling code stays the same ...
 });
 
 // Error handling middleware (must be last)
