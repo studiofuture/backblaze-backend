@@ -164,25 +164,30 @@ app.get('/cors-test', (req, res) => {
   });
 });
 
-// ADD THIS CRITICAL UPLOAD STATUS ROUTE
+// WORKING UPLOAD STATUS ROUTE - ADD THIS
 app.get('/upload/status/:uploadId', (req, res) => {
-  // Set CORS headers
+  // Set CORS headers first
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id');
   res.header('Access-Control-Allow-Credentials', 'true');
   
   const { uploadId } = req.params;
+  logger.info(`Status request for upload ${uploadId}`);
   
-  // Get status
-  const { getUploadStatus } = require('./utils/status');
-  const status = getUploadStatus(uploadId);
-  
-  if (!status) {
-    return res.status(404).json({ error: 'Upload not found' });
+  try {
+    const { getUploadStatus } = require('./utils/status');
+    const status = getUploadStatus(uploadId);
+    
+    if (!status) {
+      return res.status(404).json({ error: 'Upload not found' });
+    }
+    
+    res.json(status);
+  } catch (error) {
+    logger.error('Status route error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  
-  res.json(status);
 });
 
 // Socket.io connection handling
