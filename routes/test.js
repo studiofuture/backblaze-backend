@@ -25,6 +25,21 @@ function setCorsHeaders(req, res, next) {
 // Apply the middleware to all routes in this router
 router.use(setCorsHeaders);
 
+// ADD THIS CORS TEST ENDPOINT
+/**
+ * Test CORS configuration
+ * GET /test/cors-test
+ */
+router.get('/cors-test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'CORS is working correctly',
+    origin: req.headers.origin || 'Unknown',
+    headers: req.headers,
+    time: new Date().toISOString()
+  });
+});
+
 /**
  * Test Backblaze connection
  * GET /test/b2
