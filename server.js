@@ -15,8 +15,9 @@ const {
   failUploadStatus 
 } = require('./utils/status');
 
-// Import config validation
+// Import config validation and directory setup
 const { validateEnvironment } = require('./config');
+const { setupDirectories } = require('./utils/directory');
 
 // Create Express app
 const app = express();
@@ -266,22 +267,32 @@ app.use('*', (req, res) => {
   });
 });
 
-// Validate environment before starting
-try {
-  validateEnvironment();
-} catch (error) {
-  console.error('❌ Environment validation failed:', error.message);
-  process.exit(1);
+// Validate environment and setup directories before starting
+async function initializeServer() {
+  try {
+    // Validate environment variables
+    validateEnvironment();
+    
+    // Setup required directories
+    await setupDirectories();
+    
+    // Start server
+    const port = process.env.PORT || 3000;
+    server.listen(port, '0.0.0.0', () => {
+      console.log(`🚀 RVSHES BACKEND SERVER STARTED SUCCESSFULLY`);
+      console.log(`🔥 Port: ${port}`);
+      console.log(`🔥 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🔥 Socket.IO: Enabled with comprehensive CORS`);
+      console.log(`🔥 Directories: Created successfully`);
+      console.log(`🔥 READY FOR CONNECTIONS!`);
+    });
+  } catch (error) {
+    console.error('❌ Server initialization failed:', error.message);
+    process.exit(1);
+  }
 }
 
-// Start server
-const port = process.env.PORT || 3000;
-server.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 RVSHES BACKEND SERVER STARTED SUCCESSFULLY`);
-  console.log(`🔥 Port: ${port}`);
-  console.log(`🔥 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔥 Socket.IO: Enabled with comprehensive CORS`);
-  console.log(`🔥 READY FOR CONNECTIONS!`);
-});
+// Initialize the server
+initializeServer();
 
 module.exports = { app, server, io };
