@@ -243,33 +243,42 @@ app.get('/upload/status/:uploadId', (req, res) => {
 
 // =============================================================================
 // MOCK UPLOAD ROUTE FOR TESTING
+// FIXED: Uses consistent timestamp for both uploadId and filename
 // =============================================================================
 app.post('/upload/video', express.raw({ limit: '100mb', type: '*/*' }), (req, res) => {
-  const uploadId = `upload_${Date.now()}`;
+  // FIXED: Generate timestamp ONCE and use it for both ID and filename
+  const timestamp = Date.now();
+  const uploadId = `upload_${timestamp}`;
   
   console.log(`🎬 MOCK VIDEO UPLOAD: ${uploadId}`);
   console.log(`📁 Content-Length: ${req.headers['content-length']} bytes`);
   
+  // Use the SAME timestamp for the video URL
+  const videoUrl = `https://rushes-videos.s3.eu-central-003.backblazeb2.com/test-video-${timestamp}.mp4`;
+  
   // Initialize status
   initUploadStatus(uploadId, {
-    filename: `test-video-${Date.now()}.mp4`,
-    videoUrl: `https://rushes-videos.s3.eu-central-003.backblazeb2.com/test-video-${Date.now()}.mp4`
+    filename: `test-video-${timestamp}.mp4`,
+    videoUrl: videoUrl
   });
   
-  // Return immediate response
+  // Return immediate response with consistent timestamp
   res.json({ 
     status: "processing", 
     uploadId,
-    url: `https://rushes-videos.s3.eu-central-003.backblazeb2.com/test-video-${Date.now()}.mp4`
+    url: videoUrl
   });
   
   // Simulate background processing
   simulateVideoProcessing(uploadId);
 });
 
-// Simulate video processing
+// Simulate video processing - UPDATED to use consistent timestamps
 function simulateVideoProcessing(uploadId) {
   console.log(`🔄 SIMULATING PROCESSING: ${uploadId}`);
+  
+  // Extract timestamp from uploadId for consistent naming
+  const timestamp = uploadId.split('_')[1];
   
   setTimeout(() => {
     updateUploadStatus(uploadId, {
@@ -301,8 +310,8 @@ function simulateVideoProcessing(uploadId) {
   
   setTimeout(() => {
     completeUploadStatus(uploadId, {
-      videoUrl: `https://rushes-videos.s3.eu-central-003.backblazeb2.com/test-video-${Date.now()}.mp4`,
-      thumbnailUrl: `https://rushes-thumbnails.s3.eu-central-003.backblazeb2.com/test-thumb-${Date.now()}.jpg`,
+      videoUrl: `https://rushes-videos.s3.eu-central-003.backblazeb2.com/test-video-${timestamp}.mp4`,
+      thumbnailUrl: `https://rushes-thumbnails.s3.eu-central-003.backblazeb2.com/test-thumb-${timestamp}.jpg`,
       metadata: {
         duration: 120,
         width: 1280,
