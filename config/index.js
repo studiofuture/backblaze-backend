@@ -21,14 +21,14 @@ const config = {
       }
     }
   },
- upload: {
-  chunkSize: 25 * 1024 * 1024, // 25MB chunks for better memory management
-  maxConcurrentChunks: 1,      // Process one chunk at a time
-  retryAttempts: 3,            // Reduced retries
-  statusRetention: 10 * 60 * 1000, // 10 minutes instead of 24 hours
-  cleanupInterval: 5 * 60 * 1000,  // 5 minutes cleanup
-  timeoutMs: 180000,           // 3 minutes timeout
-}
+  upload: {
+    chunkSize: 25 * 1024 * 1024, // 25MB chunks for better memory management
+    maxConcurrentChunks: 1,      // Process one chunk at a time
+    retryAttempts: 3,            // Reduced retries
+    statusRetention: 10 * 60 * 1000, // 10 minutes instead of 24 hours
+    cleanupInterval: 5 * 60 * 1000,  // 5 minutes cleanup
+    timeoutMs: 180000,           // 3 minutes timeout
+  },
   ffmpeg: {
     binPath: 'ffmpeg', // Use system PATH
     timeout: 120000,   // 2 minutes for large video processing
@@ -40,6 +40,7 @@ const config = {
   server: {
     bodyLimit: '10mb',  // Smaller for API requests
     timeoutMs: 1800000  // 30 minutes 
+  }
 };
 
 const requiredEnvVars = [
