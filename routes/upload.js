@@ -62,7 +62,7 @@ router.get('/cors-test', (req, res) => {
  * POST /upload/video
  * FIXED: Uses consistent timestamp for both uploadId and filename
  */
-router.post('/video', upload.single('file'), async (req, res) => {
+router.post('/video', upload.single('video'), async (req, res) => {
   let uploadId;
   
   try {
