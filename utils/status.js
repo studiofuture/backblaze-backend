@@ -1,5 +1,6 @@
 const { config } = require('../config');
 const logger = require('./logger');
+const memoryMonitor = require('./memory-monitor');
 
 // In-memory storage for upload status
 const uploadStatus = {};
@@ -155,11 +156,17 @@ function failUploadStatus(uploadId, error) {
   return status;
 }
 
+// Helper function to get all statuses (for monitoring)
+function getAllStatuses() {
+  return uploadStatus;
+}
+
 module.exports = {
   setupSocketIO,
   getUploadStatus,
   updateUploadStatus,
   initUploadStatus,
   completeUploadStatus,
-  failUploadStatus
+  failUploadStatus,
+  getAllStatuses  // Add this line
 };

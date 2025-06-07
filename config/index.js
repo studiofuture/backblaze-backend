@@ -21,14 +21,14 @@ const config = {
       }
     }
   },
-  upload: {
-    chunkSize: 100 * 1024 * 1024, // 100MB chunks for better performance on paid plan
-    maxConcurrentChunks: 5,       // Increased for paid plan
-    retryAttempts: 5,
-    statusRetention: 24 * 60 * 60 * 1000, // 24 hours
-    cleanupInterval: 60 * 60 * 1000, // 1 hour
-    timeoutMs: 300000,           // 5 minutes timeout for large files
-  },
+ upload: {
+  chunkSize: 25 * 1024 * 1024, // 25MB chunks for better memory management
+  maxConcurrentChunks: 1,      // Process one chunk at a time
+  retryAttempts: 3,            // Reduced retries
+  statusRetention: 10 * 60 * 1000, // 10 minutes instead of 24 hours
+  cleanupInterval: 5 * 60 * 1000,  // 5 minutes cleanup
+  timeoutMs: 180000,           // 3 minutes timeout
+}
   ffmpeg: {
     binPath: 'ffmpeg', // Use system PATH
     timeout: 120000,   // 2 minutes for large video processing
@@ -38,9 +38,8 @@ const config = {
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
   },
   server: {
-    bodyLimit: '10gb',  // Large limit for paid plan
-    timeoutMs: 7200000  // 2 hour timeout for large operations
-  }
+    bodyLimit: '10mb',  // Smaller for API requests
+    timeoutMs: 1800000  // 30 minutes 
 };
 
 const requiredEnvVars = [

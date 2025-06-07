@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { config } = require('../config');
 const logger = require('../utils/logger');
 const { updateUploadStatus } = require('../utils/status');
-const { startHeartbeat } = require('../utils/heartbeat');
+const memoryMonitor = require('../utils/memory-monitor');
 
 // Initialize Backblaze B2 client
 const b2 = new B2({
@@ -14,28 +14,9 @@ const b2 = new B2({
 });
 
 /**
- * Test Backblaze B2 connection
- * @returns {Promise<boolean>} Connection result
+ * OPTIMIZED: Upload file with minimal memory usage (25MB chunks max)
  */
-async function testConnection() {
-  try {
-    await b2.authorize();
-    logger.info('✅ Backblaze B2 connection successful');
-    return true;
-  } catch (error) {
-    logger.error('❌ Backblaze B2 connection failed:', error);
-    throw error;
-  }
-}
-
-/**
- * Upload a file to B2 with chunking for large files
- * @param {Object} file - File object from multer
- * @param {string} uploadId - Unique upload ID for tracking
- * @param {Object} options - Upload options
- * @returns {Promise<string>} - URL of the uploaded file
- */
-async function uploadFile(file, uploadId, options = {}) {
+async function uploadFileOptimized(file, uploadId, options = {}) {
   const {
     deleteFile = true,
     bucketId = config.b2.buckets.video.id,
@@ -43,31 +24,36 @@ async function uploadFile(file, uploadId, options = {}) {
     contentType = 'video/mp4'
   } = options;
   
-  // Start a heartbeat to keep the server alive during upload
-  const heartbeat = startHeartbeat();
+  let fileHandle = null;
   
   try {
+    // Authorize B2
     await b2.authorize();
     
     const fileStats = await fs.stat(file.path);
     const fileSize = fileStats.size;
-    const chunkSize = config.upload.chunkSize;
     
-    logger.info(`📌 Uploading file: ${file.originalname} (${fileSize} bytes) to ${bucketName}`);
-    updateUploadStatus(uploadId, { stage: 'starting upload' });
+    // OPTIMIZED: Use smaller chunks (25MB) for better memory management
+    const chunkSize = 25 * 1024 * 1024; // 25MB chunks
     
-    // Calculate final URL (this is the S3-compatible URL format for Backblaze)
+    logger.info(`📌 Starting optimized upload: ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB)`);
+    memoryMonitor.logMemoryUsage(`Before B2 upload ${uploadId}`);
+    
+    updateUploadStatus(uploadId, { 
+      stage: 'initializing B2 upload',
+      progress: 85 
+    });
+    
+    // Calculate final URL
     const fileUrl = `https://${bucketName}.s3.eu-central-003.backblazeb2.com/${file.originalname}`;
     
-    // For large files, use chunked upload
+    // Open file handle for reading
+    fileHandle = await fs.open(file.path, 'r');
+    
     if (fileSize > chunkSize) {
-      logger.info(`📌 Large file detected (${fileSize} bytes). Using chunked upload...`);
-      updateUploadStatus(uploadId, { 
-        stage: 'uploading large file in chunks',
-        progress: 5 
-      });
+      // Large file upload with optimized chunking
+      logger.info(`📌 Large file detected. Using chunked upload with ${Math.round(chunkSize / 1024 / 1024)}MB chunks`);
       
-      // Start large file upload
       const startFileResponse = await b2.startLargeFile({
         bucketId: bucketId,
         fileName: file.originalname,
@@ -75,121 +61,127 @@ async function uploadFile(file, uploadId, options = {}) {
       });
       
       const fileId = startFileResponse.data.fileId;
+      const totalParts = Math.ceil(fileSize / chunkSize);
       let partSha1Array = [];
       
-      // Calculate total number of parts for progress tracking
-      const totalParts = Math.ceil(fileSize / chunkSize);
-      let completedParts = 0;
+      logger.info(`📌 Uploading ${totalParts} parts of ~${Math.round(chunkSize / 1024 / 1024)}MB each`);
       
-      logger.info(`📌 Uploading large file in ${totalParts} parts of ${Math.round(chunkSize/1024/1024)}MB each`);
-      
-      // Process each chunk one by one (streaming approach)
+      // Process chunks sequentially to minimize memory usage
       for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
         const start = (partNumber - 1) * chunkSize;
         const end = Math.min(partNumber * chunkSize, fileSize);
         const currentChunkSize = end - start;
         
-        logger.info(`📌 Processing part ${partNumber}/${totalParts} (${Math.round(currentChunkSize/1024/1024)}MB)`);
+        // CRITICAL: Read only this chunk into memory
+        const buffer = Buffer.alloc(currentChunkSize);
+        const { bytesRead } = await fileHandle.read(buffer, 0, currentChunkSize, start);
         
-        // Read just this chunk from file instead of loading entire file
-        const chunkBuffer = Buffer.alloc(currentChunkSize);
-        const fileHandle = await fs.open(file.path, 'r');
-        await fileHandle.read(chunkBuffer, 0, currentChunkSize, start);
-        await fileHandle.close();
+        if (bytesRead !== currentChunkSize) {
+          throw new Error(`Read ${bytesRead} bytes but expected ${currentChunkSize}`);
+        }
         
-        // Calculate SHA-1 hash for this chunk
-        const sha1Hash = crypto.createHash('sha1').update(chunkBuffer).digest('hex');
+        // Calculate SHA-1 for this chunk
+        const sha1Hash = crypto.createHash('sha1').update(buffer).digest('hex');
         
-        // Upload with retries
-        logger.info(`📌 Uploading part ${partNumber}/${totalParts} (size: ${currentChunkSize} bytes)`);
-        await uploadChunk(fileId, partNumber, chunkBuffer);
+        // Upload this chunk with retry logic
+        logger.debug(`📌 Uploading part ${partNumber}/${totalParts} (${Math.round(currentChunkSize / 1024 / 1024)}MB)`);
         
-        // Store hash and update progress
+        await uploadChunkWithRetry(fileId, partNumber, buffer, uploadId);
+        
+        // Store hash
         partSha1Array.push(sha1Hash);
-        completedParts++;
         
-        const progressPercent = Math.min(95, Math.floor((completedParts / totalParts) * 100));
+        // CRITICAL: Clear buffer to free memory immediately
+        buffer.fill(0);
+        
+        // Force garbage collection if available
+        if (global.gc) {
+          global.gc();
+        }
+        
+        // Update progress
+        const progressPercent = Math.min(97, 85 + Math.floor((partNumber / totalParts) * 12));
         updateUploadStatus(uploadId, {
           progress: progressPercent,
-          stage: `uploaded part ${completedParts}/${totalParts}`
+          stage: `uploaded part ${partNumber}/${totalParts}`
         });
         
-        logger.info(`✅ Completed part ${partNumber}/${totalParts} (${progressPercent}%)`);
+        // Log memory usage every 10 parts
+        if (partNumber % 10 === 0) {
+          memoryMonitor.logMemoryUsage(`B2 upload part ${partNumber}/${totalParts}`);
+        }
       }
       
-      // Finalize the large file
-      logger.info(`📌 Finalizing upload with ${partSha1Array.length} parts...`);
+      // Finalize the large file upload
+      logger.info(`📌 Finalizing large file upload with ${partSha1Array.length} parts`);
       updateUploadStatus(uploadId, { 
-        progress: 97,
-        stage: 'finalizing upload' 
+        progress: 98,
+        stage: 'finalizing B2 upload' 
       });
       
       await b2.finishLargeFile({ fileId, partSha1Array });
-      logger.info(`✅ Large file upload complete!`);
-    } 
-    // For smaller files, use simple upload
-    else {
-      logger.info(`📌 Small file detected (${fileSize} bytes). Using direct upload...`);
+      
+    } else {
+      // Small file upload (< 25MB)
+      logger.info(`📌 Small file detected (${Math.round(fileSize / 1024 / 1024)}MB). Using direct upload`);
+      
       updateUploadStatus(uploadId, { 
-        progress: 10,
-        stage: 'uploading file' 
+        progress: 90,
+        stage: 'uploading small file directly' 
       });
       
-      // Simulate progress updates for small files
-      const progressInterval = setInterval(() => {
-        const status = updateUploadStatus(uploadId, {});
-        if (status && status.progress < 80) {
-          updateUploadStatus(uploadId, { progress: status.progress + 10 });
-        }
-      }, 500);
+      // Get upload URL
+      const uploadUrlData = await b2.getUploadUrl({ bucketId: bucketId });
       
-      try {
-        // Get upload URL
-        const uploadUrlData = await b2.getUploadUrl({ bucketId: bucketId });
-        
-        // Upload file
-        const fileData = await fs.readFile(file.path);
-        await b2.uploadFile({
-          uploadUrl: uploadUrlData.data.uploadUrl,
-          uploadAuthToken: uploadUrlData.data.authorizationToken,
-          fileName: file.originalname,
-          data: fileData,
-          contentType: contentType,
-        });
-        
-        clearInterval(progressInterval);
-        updateUploadStatus(uploadId, { progress: 95, stage: 'upload complete' });
-        logger.info(`✅ Small file upload complete!`);
-      } catch (error) {
-        clearInterval(progressInterval);
-        throw error;
-      }
+      // Read entire file for small files (acceptable for <25MB)
+      const fileData = await fs.readFile(file.path);
+      
+      // Upload file
+      await b2.uploadFile({
+        uploadUrl: uploadUrlData.data.uploadUrl,
+        uploadAuthToken: uploadUrlData.data.authorizationToken,
+        fileName: file.originalname,
+        data: fileData,
+        contentType: contentType,
+      });
+      
+      logger.info(`✅ Small file upload complete`);
     }
     
-    // Stop the heartbeat
-    heartbeat.stop();
-    
-    // Clean up temp file if requested
-    if (deleteFile) {
-      if (fsSync.existsSync(file.path)) {
-        await fs.unlink(file.path);
-        logger.info(`✅ Cleaned up temp file: ${file.path}`);
-      }
+    // Close file handle
+    if (fileHandle) {
+      await fileHandle.close();
+      fileHandle = null;
     }
     
-    // Return the file URL
+    // Clean up temp file immediately if requested
+    if (deleteFile && fsSync.existsSync(file.path)) {
+      await fs.unlink(file.path);
+      logger.info(`🧹 Cleaned up temp file: ${file.path}`);
+    }
+    
+    memoryMonitor.logMemoryUsage(`After B2 upload ${uploadId}`);
+    logger.info(`✅ B2 upload completed: ${fileUrl}`);
+    
     return fileUrl;
+    
   } catch (error) {
-    // Stop the heartbeat
-    heartbeat.stop();
+    logger.error(`❌ B2 upload failed for ${uploadId}:`, error);
     
-    logger.error(`❌ Upload failed:`, error);
+    // Clean up file handle
+    if (fileHandle) {
+      try {
+        await fileHandle.close();
+      } catch (closeError) {
+        logger.error(`❌ Error closing file handle:`, closeError);
+      }
+    }
     
-    // Try to clean up temp file on error
+    // Clean up temp file on error
     if (deleteFile && fsSync.existsSync(file.path)) {
       try {
         await fs.unlink(file.path);
-        logger.info(`✅ Cleaned up temp file after error: ${file.path}`);
+        logger.info(`🧹 Cleaned up temp file after error: ${file.path}`);
       } catch (cleanupError) {
         logger.error(`❌ Failed to clean up temp file:`, cleanupError);
       }
@@ -200,16 +192,50 @@ async function uploadFile(file, uploadId, options = {}) {
 }
 
 /**
- * Upload a thumbnail to B2
- * @param {string} filePath - Path to thumbnail file
- * @param {string} fileName - Desired filename in B2
- * @returns {Promise<string>} - URL of the uploaded thumbnail
+ * Upload a single chunk with retry logic and minimal memory usage
+ */
+async function uploadChunkWithRetry(fileId, partNumber, buffer, uploadId, maxRetries = 3) {
+  let attempts = 0;
+  
+  while (attempts < maxRetries) {
+    try {
+      // Get upload URL for this part
+      const uploadPartUrl = await b2.getUploadPartUrl({ fileId });
+      
+      // Upload the part
+      const response = await b2.uploadPart({
+        partNumber,
+        uploadUrl: uploadPartUrl.data.uploadUrl,
+        uploadAuthToken: uploadPartUrl.data.authorizationToken,
+        data: buffer,
+      });
+      
+      logger.debug(`✅ Uploaded part ${partNumber} successfully`);
+      return response;
+      
+    } catch (error) {
+      attempts++;
+      logger.warn(`⚠️ Failed to upload part ${partNumber} (attempt ${attempts}/${maxRetries}):`, error.message);
+      
+      if (attempts >= maxRetries) {
+        logger.error(`❌ Part ${partNumber} failed after ${maxRetries} attempts`);
+        throw error;
+      }
+      
+      // Exponential backoff
+      const backoffMs = 1000 * Math.pow(2, attempts);
+      logger.info(`⏳ Retrying part ${partNumber} in ${backoffMs/1000} seconds...`);
+      await new Promise(resolve => setTimeout(resolve, backoffMs));
+    }
+  }
+}
+
+/**
+ * OPTIMIZED: Upload thumbnail with immediate cleanup
  */
 async function uploadThumbnail(filePath, fileName) {
   try {
-    // Authorize with B2
     await b2.authorize();
-    logger.info(`✅ B2 Authorized for thumbnail upload`);
     
     const bucketId = config.b2.buckets.thumbnail.id;
     const bucketName = config.b2.buckets.thumbnail.name;
@@ -218,18 +244,16 @@ async function uploadThumbnail(filePath, fileName) {
       throw new Error(`Thumbnail file not found at: ${filePath}`);
     }
     
+    logger.info(`🖼️ Uploading thumbnail: ${fileName}`);
+    
     // Get upload URL
-    const uploadUrlData = await b2.getUploadUrl({ 
-      bucketId: bucketId 
-    });
+    const uploadUrlData = await b2.getUploadUrl({ bucketId });
     
-    logger.info(`✅ Obtained upload URL for thumbnail`);
-    
-    // Read the file data
+    // Read thumbnail file (small, usually <1MB)
     const fileData = await fs.readFile(filePath);
     
-    // Upload the file
-    const uploadResult = await b2.uploadFile({
+    // Upload thumbnail
+    await b2.uploadFile({
       uploadUrl: uploadUrlData.data.uploadUrl,
       uploadAuthToken: uploadUrlData.data.authorizationToken,
       fileName: fileName,
@@ -237,39 +261,34 @@ async function uploadThumbnail(filePath, fileName) {
       contentType: "image/jpeg",
     });
     
-    logger.info(`✅ Thumbnail uploaded successfully: ${uploadResult.data.fileName}`);
-    
-    // Construct the thumbnail URL
+    // Construct thumbnail URL
     const thumbnailUrl = `https://${bucketName}.s3.eu-central-003.backblazeb2.com/${fileName}`;
     
+    logger.info(`✅ Thumbnail uploaded: ${thumbnailUrl}`);
     return thumbnailUrl;
+    
   } catch (error) {
-    logger.error(`❌ Error uploading thumbnail to B2:`, error);
+    logger.error(`❌ Thumbnail upload failed:`, error);
     throw error;
   }
 }
 
 /**
- * Delete a file from B2
- * @param {string} fileName - Name of file to delete
- * @param {string} bucketId - Bucket ID
- * @returns {Promise<boolean>} - Success status
+ * Delete a file from B2 with improved error handling
  */
 async function deleteFile(fileName, bucketId = config.b2.buckets.video.id) {
   try {
-    // Authorize with B2
     await b2.authorize();
     
-    logger.info(`📌 Looking for file to delete: ${fileName}`);
+    logger.info(`🗑️ Searching for file to delete: ${fileName}`);
     
-    // Find the file by listing files with the filename
+    // Find the file
     const listFilesResponse = await b2.listFileNames({
       bucketId: bucketId,
       prefix: fileName,
       maxFileCount: 10
     });
     
-    // Find the exact file in the response
     const file = listFilesResponse.data.files.find(f => f.fileName === fileName);
     
     if (!file) {
@@ -277,63 +296,39 @@ async function deleteFile(fileName, bucketId = config.b2.buckets.video.id) {
       return false;
     }
     
-    logger.info(`✅ Found file to delete: ${file.fileName} (ID: ${file.fileId})`);
-    
-    // Delete the file using its ID
+    // Delete the file
     await b2.deleteFileVersion({
       fileId: file.fileId,
       fileName: file.fileName
     });
     
-    logger.info(`✅ Successfully deleted file: ${fileName}`);
+    logger.info(`✅ Successfully deleted: ${fileName}`);
     return true;
+    
   } catch (error) {
-    logger.error(`❌ Error deleting file:`, error);
+    logger.error(`❌ Delete failed for ${fileName}:`, error);
     throw error;
   }
 }
 
 /**
- * Upload a chunk of a large file to B2 with retry logic
- * @param {string} fileId - B2 file ID from startLargeFile
- * @param {number} partNumber - Part number (1-based)
- * @param {Buffer} partData - Chunk data
- * @returns {Promise<Object>} - B2 response
+ * Test B2 connection
  */
-async function uploadChunk(fileId, partNumber, partData, maxRetries = config.upload.retryAttempts) {
-  let attempts = 0;
-  while (attempts < maxRetries) {
-    try {
-      const uploadPartUrl = await b2.getUploadPartUrl({ fileId });
-
-      const response = await b2.uploadPart({
-        partNumber,
-        uploadUrl: uploadPartUrl.data.uploadUrl,
-        uploadAuthToken: uploadPartUrl.data.authorizationToken,
-        data: partData,
-      });
-
-      logger.info(`✅ Uploaded part ${partNumber}`);
-      return response;
-    } catch (error) {
-      attempts++;
-      logger.error(`❌ Failed to upload part ${partNumber} (Attempt ${attempts}/${maxRetries})`, error);
-      
-      if (attempts >= maxRetries) {
-        throw error;
-      }
-      
-      // Wait before retrying (exponential backoff)
-      const backoffMs = 1000 * Math.pow(2, attempts);
-      logger.info(`Retrying in ${backoffMs/1000} seconds...`);
-      await new Promise(resolve => setTimeout(resolve, backoffMs));
-    }
+async function testConnection() {
+  try {
+    await b2.authorize();
+    logger.info('✅ B2 connection successful');
+    return true;
+  } catch (error) {
+    logger.error('❌ B2 connection failed:', error);
+    throw error;
   }
 }
 
 module.exports = {
-  testConnection,
-  uploadFile,
+  uploadFileOptimized,
+  uploadFile: uploadFileOptimized, // Alias for backward compatibility
   uploadThumbnail,
-  deleteFile
+  deleteFile,
+  testConnection
 };
