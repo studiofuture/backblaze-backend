@@ -22,24 +22,40 @@ const config = {
     }
   },
   upload: {
-    chunkSize: 25 * 1024 * 1024, // 25MB chunks for better memory management
-    maxConcurrentChunks: 1,      // Process one chunk at a time
-    retryAttempts: 3,            // Reduced retries
-    statusRetention: 10 * 60 * 1000, // 10 minutes instead of 24 hours
-    cleanupInterval: 5 * 60 * 1000,  // 5 minutes cleanup
-    timeoutMs: 180000,           // 3 minutes timeout
+    chunkSize: 25 * 1024 * 1024,     // 25MB chunks for optimal memory efficiency
+    maxConcurrentChunks: 1,          // Process one chunk at a time to minimize memory
+    retryAttempts: 3,                // Reduced retries for faster failure detection
+    statusRetention: 30 * 60 * 1000, // 30 minutes retention (was 24 hours)
+    cleanupInterval: 10 * 60 * 1000, // 10 minutes cleanup interval
+    timeoutMs: 600000,               // 10 minutes timeout for large files
+    maxFileSize: 100 * 1024 * 1024 * 1024, // 100GB max file size for professionals
+    busboy: {
+      // Busboy-specific configuration
+      limits: {
+        fileSize: 100 * 1024 * 1024 * 1024, // 100GB
+        files: 1,           // One file at a time
+        fields: 10,         // Max form fields
+        fieldSize: 1024 * 1024 // 1MB max field size
+      },
+      validFieldNames: ['video', 'file', 'upload', 'media'], // Accepted field names
+      validVideoTypes: [
+        'video/mp4', 'video/quicktime', 'video/x-msvideo', 
+        'video/x-matroska', 'video/mpeg', 'video/webm',
+        'video/x-ms-wmv', 'video/3gpp'
+      ]
+    }
   },
   ffmpeg: {
     binPath: 'ffmpeg', // Use system PATH
-    timeout: 120000,   // 2 minutes for large video processing
+    timeout: 300000,   // 5 minutes for large video processing (increased from 2 minutes)
   },
   supabase: {
     url: process.env.SUPABASE_URL,
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
   },
   server: {
-    bodyLimit: '10mb',  // Smaller for API requests
-    timeoutMs: 1800000  // 30 minutes 
+    bodyLimit: '5mb',    // Small limit for API calls (file uploads use streaming)
+    timeoutMs: 1800000   // 30 minutes for overall request timeout
   }
 };
 
@@ -60,10 +76,19 @@ function validateEnvironment() {
     accountId: process.env.B2_ACCOUNT_ID ? '✅ Set' : '❌ Missing',
     applicationKey: process.env.B2_APPLICATION_KEY ? '✅ Set' : '❌ Missing',
     videoBucketId: process.env.B2_VIDEO_BUCKET_ID ? '✅ Set' : '❌ Missing',
-    videoBucketName: process.env.B2_VIDEO_BUCKET_NAME || '❌ Missing',
+    videoBucketName: process.env.B2_VIDEO_BUCKET_NAME || '❌ Missing (using default)',
     thumbnailBucketId: process.env.B2_THUMBNAIL_BUCKET_ID ? '✅ Set' : '❌ Missing',
-    thumbnailBucketName: process.env.B2_THUMBNAIL_BUCKET_NAME || '❌ Missing',
-    profileBucketName: process.env.B2_PROFILE_BUCKET_NAME || '❌ Missing'
+    thumbnailBucketName: process.env.B2_THUMBNAIL_BUCKET_NAME || '❌ Missing (using default)',
+    profileBucketName: process.env.B2_PROFILE_BUCKET_NAME || '❌ Missing (using default)'
+  });
+
+  // Show configuration summary
+  logger.info('Upload configuration:', {
+    maxFileSize: `${config.upload.maxFileSize / 1024 / 1024 / 1024}GB`,
+    chunkSize: `${config.upload.chunkSize / 1024 / 1024}MB`,
+    concurrentChunks: config.upload.maxConcurrentChunks,
+    timeout: `${config.upload.timeoutMs / 1000}s`,
+    method: 'busboy-streaming'
   });
 
   // Show warnings for missing variables
@@ -83,6 +108,8 @@ function validateEnvironment() {
     logger.error('Please add these variables to your .env file');
     process.exit(1);
   }
+
+  logger.info('✅ Environment validation completed successfully');
 }
 
 module.exports = {

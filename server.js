@@ -61,9 +61,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// UPDATED: Body parsing - reduced limits since we're using streaming uploads for files
+app.use(express.json({ limit: '5mb' }));      // Only for API calls, not file uploads
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 // =============================================================================
 // ROUTES
@@ -73,11 +73,13 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.get('/', (req, res) => {
   console.log('🏠 ROOT ROUTE HIT');
   res.json({ 
-    message: 'Rvshes Backend Server - Running Successfully!',
+    message: 'Rvshes Backend Server - Running Successfully with Busboy!',
     port: process.env.PORT,
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV || 'development',
-    status: 'operational'
+    status: 'operational',
+    uploadMethod: 'busboy-streaming',
+    maxFileSize: '100GB'
   });
 });
 
@@ -89,7 +91,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    port: process.env.PORT
+    port: process.env.PORT,
+    uploadMethod: 'busboy-streaming'
   });
 });
 
@@ -97,7 +100,7 @@ app.get('/health', (req, res) => {
 app.get('/cors-test', (req, res) => {
   res.json({
     success: true,
-    message: 'CORS is working perfectly',
+    message: 'CORS is working perfectly with Busboy',
     origin: req.headers.origin || 'Unknown',
     timestamp: new Date().toISOString(),
     headers: Object.keys(req.headers)
@@ -118,7 +121,8 @@ app.get('/debug-routes', (req, res) => {
     message: 'All registered routes',
     routes,
     totalRoutes: routes.length,
-    port: process.env.PORT
+    port: process.env.PORT,
+    uploadMethod: 'busboy-streaming'
   });
 });
 
@@ -182,16 +186,38 @@ app.get('/upload/status/:uploadId', (req, res) => {
 });
 
 // =============================================================================  
-// UPLOAD ROUTES - Import the real upload routes
+// UPLOAD ROUTES - Import the busboy upload routes
 // =============================================================================
 try {
   const uploadRoutes = require('./routes/upload');
   app.use('/upload', uploadRoutes);
-  console.log('✅ Upload routes loaded successfully');
+  console.log('✅ Busboy upload routes loaded successfully');
 } catch (error) {
   console.error('❌ Failed to load upload routes:', error.message);
   console.log('📝 Make sure ./routes/upload.js exists and exports properly');
   console.error('Full error:', error);
+}
+
+// =============================================================================
+// TEST ROUTES (Optional - for debugging)
+// =============================================================================
+try {
+  const testRoutes = require('./routes/test');
+  app.use('/test', testRoutes);
+  console.log('✅ Test routes loaded successfully');
+} catch (error) {
+  console.log('📝 Test routes not found (optional)');
+}
+
+// =============================================================================
+// VIDEO ROUTES (Optional - for video management)
+// =============================================================================
+try {
+  const videoRoutes = require('./routes/video');
+  app.use('/video', videoRoutes);
+  console.log('✅ Video routes loaded successfully');
+} catch (error) {
+  console.log('📝 Video routes not found (optional)');
 }
 
 // =============================================================================
@@ -226,7 +252,8 @@ io.on('connection', (socket) => {
         message: 'Connected to upload service',
         socketId: clientId,
         uploadId,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        service: 'busboy-streaming'
       });
       console.log(`👋 Sent welcome to ${clientId} for ${uploadId}`);
     }
@@ -262,7 +289,9 @@ app.use('*', (req, res) => {
       'GET /health',
       'GET /cors-test',
       'GET /debug-routes',
-      'GET /upload/status/:uploadId'
+      'GET /upload/status/:uploadId',
+      'POST /upload/video (Busboy streaming)',
+      'GET /upload/health'
     ]
   });
 });
@@ -282,9 +311,11 @@ async function initializeServer() {
       console.log(`🚀 RVSHES BACKEND SERVER STARTED SUCCESSFULLY`);
       console.log(`🔥 Port: ${port}`);
       console.log(`🔥 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🔥 Upload Method: Busboy Streaming (100GB support)`);
+      console.log(`🔥 Memory Usage: Optimized (25MB chunks)`);
       console.log(`🔥 Socket.IO: Enabled with comprehensive CORS`);
       console.log(`🔥 Directories: Created successfully`);
-      console.log(`🔥 READY FOR CONNECTIONS!`);
+      console.log(`🔥 READY FOR LARGE FILE UPLOADS!`);
     });
   } catch (error) {
     console.error('❌ Server initialization failed:', error.message);
