@@ -96,3 +96,62 @@ function logMemoryUsage(context = 'Memory Check') {
     heap: `${memInfo.heapUsedFormatted}/${memInfo.heapTotalFormatted}`,
     rssPercent: `${memInfo.rssPercent}%`,
     heapPercent: `${memInfo.heapPercent}%`,
+    systemUsed: `${memInfo.systemUsedPercent}%`
+  });
+}
+
+/**
+ * Check if memory usage is approaching dangerous levels
+ */
+function checkMemoryPressure() {
+  const memInfo = getMemoryInfo();
+  
+  if (memInfo.rssPercent > 90) {
+    logger.error('🚨 CRITICAL: Memory usage above 90%', {
+      rss: memInfo.rssFormatted,
+      limit: memInfo.memoryLimitFormatted,
+      percent: `${memInfo.rssPercent}%`
+    });
+    return 'critical';
+  } else if (memInfo.rssPercent > 80) {
+    logger.warn('⚠️ WARNING: Memory usage above 80%', {
+      rss: memInfo.rssFormatted,
+      limit: memInfo.memoryLimitFormatted,
+      percent: `${memInfo.rssPercent}%`
+    });
+    return 'warning';
+  } else if (memInfo.rssPercent > 70) {
+    logger.info('🟡 NOTICE: Memory usage above 70%', {
+      rss: memInfo.rssFormatted,
+      limit: memInfo.memoryLimitFormatted,
+      percent: `${memInfo.rssPercent}%`
+    });
+    return 'notice';
+  }
+  
+  return 'ok';
+}
+
+/**
+ * Force garbage collection if available
+ */
+function forceGarbageCollection() {
+  if (global.gc) {
+    logger.info('🗑️ Forcing garbage collection');
+    global.gc();
+    return true;
+  } else {
+    logger.warn('⚠️ Garbage collection not available (start with --expose-gc)');
+    return false;
+  }
+}
+
+module.exports = {
+  getMemoryInfo,
+  logMemoryUsage,
+  checkMemoryPressure,
+  forceGarbageCollection,
+  formatBytes,
+  MEMORY_LIMITS,
+  INSTANCE_TYPE
+};
