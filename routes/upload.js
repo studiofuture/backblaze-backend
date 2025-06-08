@@ -50,6 +50,7 @@ router.post('/video', async (req, res) => {
       status: "success",
       uploadId,
       message: "Upload completed successfully with full functionality",
+      url: result.videoUrl, 
       ...result
     });
     
