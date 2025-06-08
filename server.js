@@ -126,65 +126,6 @@ app.get('/debug-routes', (req, res) => {
   });
 });
 
-// =============================================================================
-// UPLOAD STATUS ROUTE
-// =============================================================================
-app.get('/upload/status/:uploadId', (req, res) => {
-  const { uploadId } = req.params;
-  const origin = req.headers.origin;
-  
-  console.log(`📊 STATUS REQUEST: ${uploadId} from ${origin || 'unknown'}`);
-  
-  try {
-    const status = getUploadStatus(uploadId);
-    
-    if (!status) {
-      console.log(`❌ STATUS NOT FOUND: ${uploadId}`);
-      // Return a mock status for testing if uploadId starts with 'test'
-      if (uploadId.startsWith('test') || uploadId.startsWith('upload_test')) {
-        const mockStatus = {
-          uploadId,
-          status: 'completed',
-          progress: 100,
-          stage: 'completed',
-          uploadComplete: true,
-          message: 'Mock status for testing',
-          videoUrl: 'https://example.com/test-video.mp4',
-          thumbnailUrl: 'https://example.com/test-thumb.jpg',
-          createdAt: new Date().toISOString()
-        };
-        console.log(`🧪 RETURNING MOCK STATUS: ${uploadId}`);
-        return res.json(mockStatus);
-      }
-      
-      return res.status(404).json({ 
-        error: 'Upload not found',
-        uploadId,
-        message: 'Upload may have expired or completed',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    console.log(`✅ STATUS FOUND: ${uploadId}`, {
-      status: status.status,
-      progress: status.progress,
-      stage: status.stage,
-      complete: status.uploadComplete
-    });
-    
-    res.json(status);
-    
-  } catch (error) {
-    console.error(`❌ STATUS ERROR: ${uploadId}:`, error);
-    res.status(500).json({ 
-      error: 'Status check failed',
-      uploadId,
-      details: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
 // =============================================================================  
 // UPLOAD ROUTES - Import the busboy upload routes
 // =============================================================================
@@ -291,6 +232,7 @@ app.use('*', (req, res) => {
       'GET /debug-routes',
       'GET /upload/status/:uploadId',
       'POST /upload/video (Busboy streaming)',
+      'POST /upload/generate-thumbnail',
       'GET /upload/health'
     ]
   });

@@ -70,6 +70,65 @@ router.post('/video', async (req, res) => {
 });
 
 /**
+ * Generate thumbnail from video URL (for frontend compatibility)
+ * POST /upload/generate-thumbnail
+ */
+router.post('/generate-thumbnail', async (req, res) => {
+  try {
+    const { videoUrl, seekTime = 5 } = req.body;
+    
+    logger.info(`🖼️ Thumbnail generation requested for: ${videoUrl}`);
+    
+    if (!videoUrl) {
+      return res.status(400).json({
+        error: 'Video URL is required',
+        message: 'Please provide a videoUrl in the request body'
+      });
+    }
+    
+    // Extract filename from URL for thumbnail naming
+    const urlParts = videoUrl.split('/');
+    const filename = urlParts[urlParts.length - 1];
+    const baseName = path.basename(filename, path.extname(filename));
+    const thumbnailFileName = `${baseName}_${Date.now()}.jpg`;
+    const thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
+    
+    // Ensure thumbs directory exists
+    await ensureDirectory('uploads/thumbs');
+    
+    // Generate thumbnail from remote video URL
+    await ffmpegService.extractThumbnailFromRemote(videoUrl, thumbnailPath, seekTime);
+    logger.info(`✅ Thumbnail generated from remote URL: ${thumbnailPath}`);
+    
+    // Upload thumbnail to B2
+    const thumbnailUrl = await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
+    logger.info(`✅ Thumbnail uploaded to B2: ${thumbnailUrl}`);
+    
+    // Clean up local thumbnail
+    if (fs.existsSync(thumbnailPath)) {
+      fs.unlinkSync(thumbnailPath);
+      logger.info(`🧹 Local thumbnail cleaned up: ${thumbnailPath}`);
+    }
+    
+    res.json({
+      success: true,
+      thumbnailUrl,
+      message: 'Thumbnail generated successfully',
+      seekTime,
+      originalVideo: videoUrl
+    });
+    
+  } catch (error) {
+    logger.error(`❌ Thumbnail generation failed: ${error.message}`);
+    res.status(500).json({
+      error: 'Thumbnail generation failed',
+      details: error.message,
+      message: 'Could not generate thumbnail from video'
+    });
+  }
+});
+
+/**
  * COMPLETE PROCESSING: Full pipeline with delayed response
  * B2 Upload + FFmpeg + Thumbnail + Supabase - all before responding
  */
