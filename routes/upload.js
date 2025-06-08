@@ -19,6 +19,10 @@ const supabaseService = require('../services/supabase');
 const logger = require('../utils/logger');
 const { config } = require('../config');
 
+// DEBUG: Check logger configuration
+console.log('🔧 DEBUG: LOG_LEVEL =', process.env.LOG_LEVEL);
+console.log('🔧 DEBUG: NODE_ENV =', process.env.NODE_ENV);
+
 /**
  * COMPLETE FUNCTIONALITY: Full B2 + FFmpeg + Supabase with Delayed Response
  * Uses the working delayed response pattern to avoid QUIC protocol errors
@@ -28,10 +32,10 @@ router.post('/video', async (req, res) => {
   
   try {
     uploadId = `upload_${Date.now()}`;
-    logger.info(`🚀 COMPLETE FUNCTIONALITY upload started: ${uploadId}`);
+    console.log(`🚀 COMPLETE FUNCTIONALITY upload started: ${uploadId}`);
     
     // Log request details
-    logger.info('📋 Request info:', {
+    console.log('📋 Request info:', {
       method: req.method,
       contentType: req.headers['content-type'],
       contentLength: req.headers['content-length'],
@@ -39,13 +43,13 @@ router.post('/video', async (req, res) => {
     });
     
     // DO NOT RESPOND IMMEDIATELY - Wait for complete processing
-    logger.info(`⏳ Waiting for COMPLETE processing before responding (B2 + FFmpeg + Supabase)`);
+    console.log(`⏳ Waiting for COMPLETE processing before responding (B2 + FFmpeg + Supabase)`);
 
     // Process upload with FULL functionality and wait for completion
     const result = await handleCompleteUploadWithDelayedResponse(req, uploadId);
     
     // Only respond after everything is complete
-    logger.info(`✅ Complete processing finished, now sending response: ${uploadId}`);
+    console.log(`✅ Complete processing finished, now sending response: ${uploadId}`);
     res.json({
       status: "success",
       uploadId,
@@ -55,8 +59,8 @@ router.post('/video', async (req, res) => {
     });
     
   } catch (error) {
-    logger.error(`❌ Complete upload failed: ${error.message}`);
-    logger.error(`❌ Stack: ${error.stack}`);
+    console.error(`❌ Complete upload failed: ${error.message}`);
+    console.error(`❌ Stack: ${error.stack}`);
     
     if (uploadId) {
       failUploadStatus(uploadId, error);
@@ -78,7 +82,7 @@ router.post('/generate-thumbnail', async (req, res) => {
   try {
     const { videoUrl, seekTime = 5 } = req.body;
     
-    logger.info(`🖼️ Thumbnail generation requested for: ${videoUrl}`);
+    console.log(`🖼️ Thumbnail generation requested for: ${videoUrl}`);
     
     if (!videoUrl) {
       return res.status(400).json({
@@ -99,16 +103,16 @@ router.post('/generate-thumbnail', async (req, res) => {
     
     // Generate thumbnail from remote video URL
     await ffmpegService.extractThumbnailFromRemote(videoUrl, thumbnailPath, seekTime);
-    logger.info(`✅ Thumbnail generated from remote URL: ${thumbnailPath}`);
+    console.log(`✅ Thumbnail generated from remote URL: ${thumbnailPath}`);
     
     // Upload thumbnail to B2
     const thumbnailUrl = await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
-    logger.info(`✅ Thumbnail uploaded to B2: ${thumbnailUrl}`);
+    console.log(`✅ Thumbnail uploaded to B2: ${thumbnailUrl}`);
     
     // Clean up local thumbnail
     if (fs.existsSync(thumbnailPath)) {
       fs.unlinkSync(thumbnailPath);
-      logger.info(`🧹 Local thumbnail cleaned up: ${thumbnailPath}`);
+      console.log(`🧹 Local thumbnail cleaned up: ${thumbnailPath}`);
     }
     
     res.json({
@@ -120,7 +124,7 @@ router.post('/generate-thumbnail', async (req, res) => {
     });
     
   } catch (error) {
-    logger.error(`❌ Thumbnail generation failed: ${error.message}`);
+    console.error(`❌ Thumbnail generation failed: ${error.message}`);
     res.status(500).json({
       error: 'Thumbnail generation failed',
       details: error.message,
@@ -135,18 +139,18 @@ router.post('/generate-thumbnail', async (req, res) => {
  */
 async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
   return new Promise(async (resolve, reject) => {
-    logger.info(`🚀 Starting COMPLETE upload handler for ${uploadId}`);
+    console.log(`🚀 Starting COMPLETE upload handler for ${uploadId}`);
     
     try {
       // Step 1: Directory creation
-      logger.info(`📁 Creating directories...`);
+      console.log(`📁 Creating directories...`);
       await ensureDirectory('uploads');
       await ensureDirectory('uploads/temp');
       await ensureDirectory('uploads/thumbs');
-      logger.info(`✅ All directories ready`);
+      console.log(`✅ All directories ready`);
       
       // Step 2: Busboy setup
-      logger.info(`🔧 Setting up busboy for complete processing...`);
+      console.log(`🔧 Setting up busboy for complete processing...`);
       const bb = busboy({ 
         headers: req.headers,
         limits: {
@@ -174,7 +178,7 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
 
       // File handler with full validation
       bb.on('file', (fieldname, file, info) => {
-        logger.info(`📥 File handler triggered:`, {
+        console.log(`📥 File handler triggered:`, {
           fieldname,
           filename: info.filename,
           mimeType: info.mimeType,
@@ -185,7 +189,7 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
           // Accept common field names
           const validFieldNames = ['video', 'file', 'upload', 'media'];
           if (!validFieldNames.includes(fieldname)) {
-            logger.warn(`⚠️ Unexpected field name: ${fieldname}. Accepting anyway.`);
+            console.warn(`⚠️ Unexpected field name: ${fieldname}. Accepting anyway.`);
           }
           
           fileReceived = true;
@@ -193,8 +197,8 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
           filename = generateUniqueFilename(originalName);
           tempFilePath = getUploadPath('temp', filename);
           
-          logger.info(`📁 Processing: ${originalName} -> ${filename}`);
-          logger.info(`📁 Target: ${tempFilePath}`);
+          console.log(`📁 Processing: ${originalName} -> ${filename}`);
+          console.log(`📁 Target: ${tempFilePath}`);
           
           // FULL FILE TYPE VALIDATION
           const validVideoTypes = [
@@ -205,29 +209,29 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
           
           if (!validVideoTypes.includes(info.mimeType)) {
             const error = new Error(`Invalid file type: ${info.mimeType}. Only video files are allowed.`);
-            logger.error(`❌ ${error.message}`);
+            console.error(`❌ ${error.message}`);
             return reject(error);
           }
           
           // Verify directory
           const tempDir = path.dirname(tempFilePath);
           if (!fs.existsSync(tempDir)) {
-            logger.error(`❌ Directory missing: ${tempDir}`);
+            console.error(`❌ Directory missing: ${tempDir}`);
             return reject(new Error(`Directory not found: ${tempDir}`));
           }
           
           // Create write stream
           try {
             writeStream = fs.createWriteStream(tempFilePath);
-            logger.info(`✅ Write stream created successfully`);
+            console.log(`✅ Write stream created successfully`);
             
             writeStream.on('error', (streamError) => {
-              logger.error(`❌ Write stream error: ${streamError.message}`);
+              console.error(`❌ Write stream error: ${streamError.message}`);
               reject(streamError);
             });
             
           } catch (streamCreateError) {
-            logger.error(`❌ Write stream creation failed: ${streamCreateError.message}`);
+            console.error(`❌ Write stream creation failed: ${streamCreateError.message}`);
             return reject(streamCreateError);
           }
           
@@ -241,7 +245,7 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
                 const progressPercent = req.headers['content-length'] ? 
                   Math.min(50, Math.floor((totalBytesReceived / req.headers['content-length']) * 50)) : 5;
                 
-                logger.info(`📊 Received: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB`);
+                console.log(`📊 Received: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB`);
                 
                 updateUploadStatus(uploadId, {
                   progress: progressPercent,
@@ -250,13 +254,13 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
                 });
               }
             } catch (dataError) {
-              logger.error(`❌ Data handler error: ${dataError.message}`);
+              console.error(`❌ Data handler error: ${dataError.message}`);
               reject(dataError);
             }
           });
           
           file.on('end', () => {
-            logger.info(`✅ File stream ended: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB total`);
+            console.log(`✅ File stream ended: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB total`);
             
             updateUploadStatus(uploadId, {
               progress: 55,
@@ -267,15 +271,15 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
             
             try {
               writeStream.end();
-              logger.info(`✅ Write stream end() called`);
+              console.log(`✅ Write stream end() called`);
             } catch (endError) {
-              logger.error(`❌ Write stream end failed: ${endError.message}`);
+              console.error(`❌ Write stream end failed: ${endError.message}`);
               reject(endError);
             }
           });
           
           file.on('error', (fileError) => {
-            logger.error(`❌ File stream error: ${fileError.message}`);
+            console.error(`❌ File stream error: ${fileError.message}`);
             if (writeStream && !writeStream.destroyed) {
               writeStream.destroy();
             }
@@ -283,7 +287,7 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
           });
           
           writeStream.on('close', () => {
-            logger.info(`✅ Write stream closed - starting COMPLETE background processing`);
+            console.log(`✅ Write stream closed - starting COMPLETE background processing`);
             
             // Extract form fields for processing
             const videoId = formFields.videoId;
@@ -292,53 +296,53 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
             // Start COMPLETE background processing
             processVideoComplete(uploadId, tempFilePath, filename, originalName, videoId, metadata)
               .then((result) => {
-                logger.info(`✅ COMPLETE processing finished for ${uploadId}`);
+                console.log(`✅ COMPLETE processing finished for ${uploadId}`);
                 resolve(result);
               })
               .catch((error) => {
-                logger.error(`❌ COMPLETE processing failed: ${error.message}`);
+                console.error(`❌ COMPLETE processing failed: ${error.message}`);
                 reject(error);
               });
           });
           
           // Pipe file to write stream
-          logger.info(`🔗 Piping file to write stream...`);
+          console.log(`🔗 Piping file to write stream...`);
           file.pipe(writeStream);
           
         } catch (fileHandlerError) {
-          logger.error(`❌ File handler error: ${fileHandlerError.message}`);
+          console.error(`❌ File handler error: ${fileHandlerError.message}`);
           reject(fileHandlerError);
         }
       });
 
       // Handle form fields (videoId, metadata, etc.)
       bb.on('field', (fieldname, value) => {
-        logger.debug(`📝 Form field: ${fieldname} = ${value}`);
+        console.log(`📝 Form field: ${fieldname} = ${value}`);
         formFields[fieldname] = value;
       });
 
       bb.on('finish', () => {
-        logger.info(`🏁 Busboy finished for ${uploadId}`);
+        console.log(`🏁 Busboy finished for ${uploadId}`);
         
         if (!fileReceived) {
           const error = new Error('No video file was uploaded. Please select a video file.');
-          logger.error(`❌ ${error.message}`);
+          console.error(`❌ ${error.message}`);
           reject(error);
         } else {
-          logger.info(`✅ Busboy finished successfully, waiting for COMPLETE processing...`);
+          console.log(`✅ Busboy finished successfully, waiting for COMPLETE processing...`);
         }
       });
 
       bb.on('error', (error) => {
-        logger.error(`❌ Busboy error: ${error.message}`);
+        console.error(`❌ Busboy error: ${error.message}`);
         
         // Clean up temp file
         if (tempFilePath && fs.existsSync(tempFilePath)) {
           try {
             fs.unlinkSync(tempFilePath);
-            logger.info(`🧹 Cleaned up temp file after busboy error`);
+            console.log(`🧹 Cleaned up temp file after busboy error`);
           } catch (cleanupError) {
-            logger.error(`❌ Error cleaning up: ${cleanupError.message}`);
+            console.error(`❌ Error cleaning up: ${cleanupError.message}`);
           }
         }
         reject(error);
@@ -346,29 +350,29 @@ async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
 
       // Request handlers
       req.on('error', (error) => {
-        logger.error(`❌ Request error: ${error.message}`);
+        console.error(`❌ Request error: ${error.message}`);
         reject(error);
       });
 
       req.on('aborted', () => {
-        logger.warn(`⚠️ Request aborted for ${uploadId}`);
+        console.warn(`⚠️ Request aborted for ${uploadId}`);
         reject(new Error('Upload was cancelled'));
       });
 
       // Pipe request to busboy
-      logger.info(`🔗 Piping request to busboy...`);
+      console.log(`🔗 Piping request to busboy...`);
       try {
         req.pipe(bb);
-        logger.info(`✅ Request piped successfully`);
+        console.log(`✅ Request piped successfully`);
       } catch (pipeError) {
-        logger.error(`❌ Request pipe failed: ${pipeError.message}`);
+        console.error(`❌ Request pipe failed: ${pipeError.message}`);
         reject(pipeError);
       }
       
-      logger.info(`⏳ Waiting for COMPLETE upload and processing...`);
+      console.log(`⏳ Waiting for COMPLETE upload and processing...`);
       
     } catch (setupError) {
-      logger.error(`❌ Setup error: ${setupError.message}`);
+      console.error(`❌ Setup error: ${setupError.message}`);
       reject(setupError);
     }
   });
@@ -383,7 +387,7 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
   let videoMetadata = null;
   
   try {
-    logger.info(`🚀 COMPLETE processing started for ${uploadId}`);
+    console.log(`🚀 COMPLETE processing started for ${uploadId}`);
     
     // Step 1: Extract video metadata
     updateUploadStatus(uploadId, {
@@ -393,13 +397,13 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
     
     try {
       videoMetadata = await ffmpegService.extractVideoMetadata(tempFilePath);
-      logger.info(`✅ Metadata extracted for ${uploadId}:`, {
+      console.log(`✅ Metadata extracted for ${uploadId}:`, {
         duration: videoMetadata.duration,
         dimensions: `${videoMetadata.width}x${videoMetadata.height}`,
         size: `${Math.floor(videoMetadata.size / 1024 / 1024)}MB`
       });
     } catch (metadataError) {
-      logger.warn(`⚠️ Metadata extraction failed: ${metadataError.message}`);
+      console.warn(`⚠️ Metadata extraction failed: ${metadataError.message}`);
       videoMetadata = { duration: 0, width: 0, height: 0, size: 0 };
     }
 
@@ -419,7 +423,7 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
       thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
       
       await ffmpegService.generateThumbnail(tempFilePath, thumbnailPath);
-      logger.info(`✅ Thumbnail generated: ${thumbnailPath}`);
+      console.log(`✅ Thumbnail generated: ${thumbnailPath}`);
       
       updateUploadStatus(uploadId, {
         stage: 'uploading thumbnail to B2',
@@ -428,12 +432,12 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
       
       // Upload thumbnail to B2
       thumbnailUrl = await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
-      logger.info(`✅ Thumbnail uploaded to B2: ${thumbnailUrl}`);
+      console.log(`✅ Thumbnail uploaded to B2: ${thumbnailUrl}`);
       
       // Clean up local thumbnail immediately
       if (fs.existsSync(thumbnailPath)) {
         fs.unlinkSync(thumbnailPath);
-        logger.info(`🧹 Local thumbnail cleaned up`);
+        console.log(`🧹 Local thumbnail cleaned up`);
       }
       
       updateUploadStatus(uploadId, {
@@ -442,7 +446,7 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
       });
       
     } catch (thumbnailError) {
-      logger.warn(`⚠️ Thumbnail generation/upload failed: ${thumbnailError.message}`);
+      console.warn(`⚠️ Thumbnail generation/upload failed: ${thumbnailError.message}`);
       // Continue without thumbnail
     }
 
@@ -453,7 +457,7 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
       progress: 85
     });
     
-    logger.info(`☁️ Starting B2 video upload: ${filename}`);
+    console.log(`☁️ Starting B2 video upload: ${filename}`);
     
     // Create file object for B2 service
     const fileStats = fs.statSync(tempFilePath);
@@ -466,12 +470,12 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
     
     // Upload with optimized 25MB chunks
     const videoUrl = await b2Service.uploadFileOptimized(fileObject, uploadId);
-    logger.info(`✅ Video uploaded successfully to B2: ${videoUrl}`);
+    console.log(`✅ Video uploaded successfully to B2: ${videoUrl}`);
     
     // Step 4: Clean up temp file immediately after B2 upload
     if (fs.existsSync(tempFilePath)) {
       fs.unlinkSync(tempFilePath);
-      logger.info(`🧹 Temp file cleaned up: ${tempFilePath}`);
+      console.log(`🧹 Temp file cleaned up: ${tempFilePath}`);
     }
     
     // Step 5: Update Supabase database if videoId provided
@@ -490,9 +494,9 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
           height: videoMetadata?.height || 0
         });
         
-        logger.info(`✅ Supabase database updated for video ${videoId}`);
+        console.log(`✅ Supabase database updated for video ${videoId}`);
       } catch (supabaseError) {
-        logger.error(`⚠️ Database update failed: ${supabaseError.message}`);
+        console.error(`⚠️ Database update failed: ${supabaseError.message}`);
         // Continue anyway - upload was successful
       }
     }
@@ -510,11 +514,11 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
     
     completeUploadStatus(uploadId, finalData);
     
-    logger.info(`🎉 COMPLETE processing successful: ${uploadId}`);
+    console.log(`🎉 COMPLETE processing successful: ${uploadId}`);
     return finalData;
     
   } catch (error) {
-    logger.error(`❌ COMPLETE processing failed for ${uploadId}:`, {
+    console.error(`❌ COMPLETE processing failed for ${uploadId}:`, {
       error: error.message,
       stack: error.stack,
       tempFilePath,
@@ -525,17 +529,17 @@ async function processVideoComplete(uploadId, tempFilePath, filename, originalNa
     if (tempFilePath && fs.existsSync(tempFilePath)) {
       try {
         fs.unlinkSync(tempFilePath);
-        logger.info(`🧹 Error cleanup - temp file removed: ${tempFilePath}`);
+        console.log(`🧹 Error cleanup - temp file removed: ${tempFilePath}`);
       } catch (cleanupError) {
-        logger.error(`❌ Error cleanup failed: ${cleanupError.message}`);
+        console.error(`❌ Error cleanup failed: ${cleanupError.message}`);
       }
     }
     if (thumbnailPath && fs.existsSync(thumbnailPath)) {
       try {
         fs.unlinkSync(thumbnailPath);
-        logger.info(`🧹 Error cleanup - thumbnail removed: ${thumbnailPath}`);
+        console.log(`🧹 Error cleanup - thumbnail removed: ${thumbnailPath}`);
       } catch (cleanupError) {
-        logger.error(`❌ Thumbnail cleanup failed: ${cleanupError.message}`);
+        console.error(`❌ Thumbnail cleanup failed: ${cleanupError.message}`);
       }
     }
     
@@ -573,7 +577,7 @@ router.get('/status/:uploadId', (req, res) => {
     res.json(response);
     
   } catch (error) {
-    logger.error(`❌ Status check error: ${error.message}`);
+    console.error(`❌ Status check error: ${error.message}`);
     res.status(500).json({ 
       error: 'Status check failed',
       details: error.message
