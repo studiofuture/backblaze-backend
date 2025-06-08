@@ -19,28 +19,16 @@ const supabaseService = require('../services/supabase');
 const logger = require('../utils/logger');
 const { config } = require('../config');
 
-// Memory monitoring utility
-const memoryMonitor = require('../utils/memory-monitor');
-
 /**
- * OPTIMIZED: Streaming upload handler with proper field name handling
+ * FIXED: Streaming upload handler with proper error handling
  * Supports unlimited file sizes with 25MB memory usage
  */
 router.post('/video', async (req, res) => {
   let uploadId;
   
   try {
-    // Check available memory before starting
-    const memInfo = memoryMonitor.getMemoryInfo();
-    if (memInfo.rssPercent > 80) {
-      return res.status(503).json({ 
-        error: 'Server at capacity, please try again in a moment',
-        retryAfter: 30 
-      });
-    }
-
     uploadId = `upload_${Date.now()}`;
-    logger.info(`🎬 Busboy video upload started: ${uploadId}`);
+    logger.info(`🎬 FIXED Busboy video upload started: ${uploadId}`);
     
     // DEBUG: Log request info to identify field names
     logger.info('📋 Request debug:', {
@@ -53,14 +41,15 @@ router.post('/video', async (req, res) => {
     res.json({ 
       status: "uploading", 
       uploadId,
-      message: "Upload started successfully"
+      message: "Upload started successfully - FIXED VERSION"
     });
 
-    // Process upload with streaming approach
-    await handleStreamingUpload(req, uploadId);
+    // Process upload with FIXED streaming approach
+    await handleFixedStreamingUpload(req, uploadId);
     
   } catch (error) {
-    logger.error(`❌ Upload failed: ${error.message}`);
+    logger.error(`❌ FIXED Upload failed: ${error.message}`);
+    logger.error(`❌ FIXED Upload stack: ${error.stack}`);
     if (uploadId) {
       failUploadStatus(uploadId, error);
     }
@@ -72,11 +61,13 @@ router.post('/video', async (req, res) => {
 });
 
 /**
- * Enhanced streaming upload handler using busboy
+ * FIXED: Enhanced streaming upload handler using busboy
  * Handles multiple possible field names from frontend
  */
-async function handleStreamingUpload(req, uploadId) {
+async function handleFixedStreamingUpload(req, uploadId) {
   return new Promise((resolve, reject) => {
+    logger.info(`📥 FIXED Starting busboy for ${uploadId}`);
+    
     // Configure busboy with large file support
     const bb = busboy({ 
       headers: req.headers,
@@ -93,17 +84,19 @@ async function handleStreamingUpload(req, uploadId) {
     let tempFilePath;
     let writeStream;
     let uploadStarted = false;
+    let fileStreamEnded = false;
+    let writeStreamClosed = false;
 
     // Initialize upload status
     initUploadStatus(uploadId, {
       status: 'receiving',
-      stage: 'starting upload'
+      stage: 'starting FIXED upload'
     });
 
     // Handle file uploads - support multiple field names
     bb.on('file', (fieldname, file, info) => {
       try {
-        logger.info(`📥 Busboy file detected:`, {
+        logger.info(`📥 FIXED Busboy file detected:`, {
           fieldname,
           filename: info.filename,
           mimeType: info.mimeType,
@@ -113,14 +106,14 @@ async function handleStreamingUpload(req, uploadId) {
         // Accept common field names: 'video', 'file', 'upload', etc.
         const validFieldNames = ['video', 'file', 'upload', 'media'];
         if (!validFieldNames.includes(fieldname)) {
-          logger.warn(`⚠️ Unexpected field name: ${fieldname}. Accepting anyway.`);
+          logger.warn(`⚠️ FIXED Unexpected field name: ${fieldname}. Accepting anyway.`);
         }
         
         originalName = info.filename;
         filename = generateUniqueFilename(originalName);
         tempFilePath = getUploadPath('temp', filename);
         
-        logger.info(`📁 Processing: ${originalName} -> ${filename}`);
+        logger.info(`📁 FIXED Processing: ${originalName} -> ${filename}`);
         
         // Validate file type
         const validVideoTypes = [
@@ -131,7 +124,7 @@ async function handleStreamingUpload(req, uploadId) {
         
         if (!validVideoTypes.includes(info.mimeType)) {
           const error = new Error(`Invalid file type: ${info.mimeType}. Only video files are allowed.`);
-          logger.error(`❌ ${error.message}`);
+          logger.error(`❌ FIXED ${error.message}`);
           return reject(error);
         }
         
@@ -145,13 +138,13 @@ async function handleStreamingUpload(req, uploadId) {
         
         updateUploadStatus(uploadId, {
           status: 'receiving',
-          stage: 'receiving file data',
+          stage: 'receiving file data - FIXED',
           progress: 5,
           filename: originalName,
           totalBytes: contentLength
         });
 
-        // Stream file data to disk with progress tracking
+        // FIXED: Stream file data to disk with progress tracking
         file.on('data', (chunk) => {
           uploadedBytes += chunk.length;
           
@@ -160,6 +153,8 @@ async function handleStreamingUpload(req, uploadId) {
             const progressPercent = contentLength > 0 ? 
               Math.min(50, Math.floor((uploadedBytes / contentLength) * 50)) : 5;
             
+            logger.info(`📊 FIXED Progress: ${Math.floor(uploadedBytes / 1024 / 1024)}MB received`);
+            
             updateUploadStatus(uploadId, {
               progress: progressPercent,
               stage: `received ${Math.floor(uploadedBytes / 1024 / 1024)}MB`,
@@ -167,95 +162,109 @@ async function handleStreamingUpload(req, uploadId) {
             });
             
             lastProgressUpdate = uploadedBytes;
-            
-            // Log memory usage periodically for large files
-            if (uploadedBytes % (100 * 1024 * 1024) === 0) {
-              memoryMonitor.logMemoryUsage(`Upload ${uploadId} - ${Math.floor(uploadedBytes / 1024 / 1024)}MB`);
-            }
           }
         });
 
+        // FIXED: Proper file end handling
         file.on('end', () => {
-          logger.info(`✅ File reception complete: ${filename} (${Math.floor(uploadedBytes / 1024 / 1024)}MB)`);
+          logger.info(`✅ FIXED File stream ended: ${filename} (${Math.floor(uploadedBytes / 1024 / 1024)}MB)`);
+          fileStreamEnded = true;
+          
           updateUploadStatus(uploadId, {
             progress: 50,
-            stage: 'file received, starting processing',
+            stage: 'file stream ended, waiting for write completion',
             uploadedBytes,
             status: 'processing'
           });
+          
+          // Close the write stream properly
+          writeStream.end();
         });
 
+        // FIXED: Handle write stream close event
+        writeStream.on('close', () => {
+          logger.info(`✅ FIXED Write stream closed for ${uploadId}`);
+          writeStreamClosed = true;
+          
+          updateUploadStatus(uploadId, {
+            stage: 'file reception complete - FIXED',
+            progress: 55
+          });
+          
+          // Check if we can start processing
+          checkAndStartProcessing();
+        });
+
+        // FIXED: Better error handling
         file.on('error', (error) => {
-          logger.error(`❌ File stream error: ${error.message}`);
-          if (writeStream) writeStream.destroy();
+          logger.error(`❌ FIXED File stream error: ${error.message}`);
+          if (writeStream && !writeStream.destroyed) {
+            writeStream.destroy();
+          }
           reject(error);
         });
 
         // Handle write stream errors
         writeStream.on('error', (error) => {
-          logger.error(`❌ Write stream error: ${error.message}`);
+          logger.error(`❌ FIXED Write stream error: ${error.message}`);
           reject(error);
         });
+
+        // FIXED: Function to check if we can start processing
+        function checkAndStartProcessing() {
+          if (fileStreamEnded && writeStreamClosed) {
+            logger.info(`🔄 FIXED Starting background processing for ${uploadId}`);
+            
+            // Extract any form fields for processing
+            const videoId = req.formFields?.videoId;
+            const metadata = req.formFields?.metadata;
+            
+            // Start background processing
+            processVideoBackgroundFixed(uploadId, tempFilePath, filename, originalName, videoId, metadata)
+              .then(() => {
+                logger.info(`✅ FIXED Background processing completed for ${uploadId}`);
+                resolve();
+              })
+              .catch((error) => {
+                logger.error(`❌ FIXED Background processing failed for ${uploadId}:`, error);
+                reject(error);
+              });
+          }
+        }
 
         // Pipe file to disk
         file.pipe(writeStream);
 
       } catch (error) {
-        logger.error(`❌ Error setting up file stream: ${error.message}`);
+        logger.error(`❌ FIXED Error setting up file stream: ${error.message}`);
         reject(error);
       }
     });
 
     // Handle form fields (like videoId, metadata, etc.)
     bb.on('field', (fieldname, value) => {
-      logger.debug(`📝 Form field: ${fieldname} = ${value}`);
+      logger.debug(`📝 FIXED Form field: ${fieldname} = ${value}`);
       // Store form fields for later use in processing
       if (!req.formFields) req.formFields = {};
       req.formFields[fieldname] = value;
     });
 
-    bb.on('finish', async () => {
+    // FIXED: Simplified finish handler - no manual stream ending
+    bb.on('finish', () => {
+      logger.info(`🏁 FIXED Busboy finished for ${uploadId}`);
+      
       if (!uploadStarted) {
         const error = new Error('No video file was uploaded. Please select a video file.');
-        logger.error(`❌ ${error.message}`);
+        logger.error(`❌ FIXED ${error.message}`);
         return reject(error);
       }
-
-      try {
-        // Ensure write stream is closed
-        if (writeStream && !writeStream.destroyed) {
-          writeStream.end();
-          await new Promise((resolve, reject) => {
-            writeStream.on('close', resolve);
-            writeStream.on('error', reject);
-          });
-        }
-
-        logger.info(`🔄 Starting background processing for ${uploadId}`);
-        
-        // Extract any form fields for processing
-        const videoId = req.formFields?.videoId;
-        const metadata = req.formFields?.metadata;
-        
-        // Start background processing (don't await)
-        processVideoBackground(uploadId, tempFilePath, filename, originalName, videoId, metadata)
-          .then(() => {
-            logger.info(`✅ Background processing completed for ${uploadId}`);
-            resolve();
-          })
-          .catch((error) => {
-            logger.error(`❌ Background processing failed for ${uploadId}:`, error);
-            reject(error);
-          });
-          
-      } catch (error) {
-        logger.error(`❌ Error finishing upload: ${error.message}`);
-        reject(error);
-      }
+      
+      // Don't manually handle writeStream here - let the file 'end' event handle it
+      logger.info(`✅ FIXED Busboy finish - waiting for streams to close naturally`);
     });
 
     bb.on('error', (error) => {
-      logger.error(`❌ Busboy error: ${error.message}`);
+      logger.error(`❌ FIXED Busboy error: ${error.message}`);
       if (writeStream && !writeStream.destroyed) {
         writeStream.destroy();
       }
@@ -263,8 +272,9 @@ async function handleStreamingUpload(req, uploadId) {
       if (tempFilePath && fs.existsSync(tempFilePath)) {
         try {
           fs.unlinkSync(tempFilePath);
+          logger.info(`🧹 FIXED Cleaned up temp file: ${tempFilePath}`);
         } catch (cleanupError) {
-          logger.error(`❌ Error cleaning up temp file: ${cleanupError.message}`);
+          logger.error(`❌ FIXED Error cleaning up temp file: ${cleanupError.message}`);
         }
       }
       reject(error);
@@ -272,7 +282,7 @@ async function handleStreamingUpload(req, uploadId) {
 
     // Handle request stream errors
     req.on('error', (error) => {
-      logger.error(`❌ Request stream error: ${error.message}`);
+      logger.error(`❌ FIXED Request stream error: ${error.message}`);
       if (writeStream && !writeStream.destroyed) {
         writeStream.destroy();
       }
@@ -280,7 +290,7 @@ async function handleStreamingUpload(req, uploadId) {
     });
 
     req.on('aborted', () => {
-      logger.warn(`⚠️ Request aborted for ${uploadId}`);
+      logger.warn(`⚠️ FIXED Request aborted for ${uploadId}`);
       if (writeStream && !writeStream.destroyed) {
         writeStream.destroy();
       }
@@ -288,52 +298,53 @@ async function handleStreamingUpload(req, uploadId) {
       if (tempFilePath && fs.existsSync(tempFilePath)) {
         try {
           fs.unlinkSync(tempFilePath);
+          logger.info(`🧹 FIXED Cleaned up temp file after abort: ${tempFilePath}`);
         } catch (cleanupError) {
-          logger.error(`❌ Error cleaning up temp file: ${cleanupError.message}`);
+          logger.error(`❌ FIXED Error cleaning up temp file: ${cleanupError.message}`);
         }
       }
       reject(new Error('Upload was cancelled'));
     });
 
     // Pipe request to busboy
+    logger.info(`🔗 FIXED Piping request to busboy for ${uploadId}`);
     req.pipe(bb);
   });
 }
 
 /**
- * Background video processing with memory optimization
+ * FIXED: Background video processing without memory monitor
  * Supports files up to 100GB with 25MB memory usage
  */
-async function processVideoBackground(uploadId, tempFilePath, filename, originalName, videoId, metadata) {
+async function processVideoBackgroundFixed(uploadId, tempFilePath, filename, originalName, videoId, metadata) {
   let thumbnailPath = null;
   let videoMetadata = null;
   
   try {
-    // Log memory before processing
-    memoryMonitor.logMemoryUsage(`Before processing ${uploadId}`);
+    logger.info(`🔄 FIXED Background processing started for ${uploadId}`);
     
     // Step 1: Extract metadata (lightweight operation)
     updateUploadStatus(uploadId, {
-      stage: 'extracting video metadata',
-      progress: 55
+      stage: 'extracting video metadata - FIXED',
+      progress: 60
     });
     
     try {
       videoMetadata = await ffmpegService.extractVideoMetadata(tempFilePath);
-      logger.info(`✅ Metadata extracted for ${uploadId}:`, {
+      logger.info(`✅ FIXED Metadata extracted for ${uploadId}:`, {
         duration: videoMetadata.duration,
         dimensions: `${videoMetadata.width}x${videoMetadata.height}`,
         size: `${Math.floor(videoMetadata.size / 1024 / 1024)}MB`
       });
     } catch (metadataError) {
-      logger.warn(`⚠️ Metadata extraction failed: ${metadataError.message}`);
+      logger.warn(`⚠️ FIXED Metadata extraction failed: ${metadataError.message}`);
       videoMetadata = { duration: 0, width: 0, height: 0, size: 0 };
     }
 
     // Step 2: Generate thumbnail
     updateUploadStatus(uploadId, {
-      stage: 'generating thumbnail',
-      progress: 65,
+      stage: 'generating thumbnail - FIXED',
+      progress: 70,
       metadata: videoMetadata
     });
     
@@ -345,11 +356,11 @@ async function processVideoBackground(uploadId, tempFilePath, filename, original
       thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
       
       await ffmpegService.generateThumbnail(tempFilePath, thumbnailPath);
-      logger.info(`✅ Thumbnail generated: ${thumbnailPath}`);
+      logger.info(`✅ FIXED Thumbnail generated: ${thumbnailPath}`);
       
       updateUploadStatus(uploadId, {
-        stage: 'uploading thumbnail',
-        progress: 75
+        stage: 'uploading thumbnail - FIXED',
+        progress: 80
       });
       
       // Upload thumbnail to B2
@@ -362,22 +373,22 @@ async function processVideoBackground(uploadId, tempFilePath, filename, original
       
       updateUploadStatus(uploadId, {
         thumbnailUrl,
-        progress: 80
+        progress: 85
       });
       
     } catch (thumbnailError) {
-      logger.warn(`⚠️ Thumbnail generation failed: ${thumbnailError.message}`);
+      logger.warn(`⚠️ FIXED Thumbnail generation failed: ${thumbnailError.message}`);
       // Continue without thumbnail
     }
 
     // Step 3: Upload video to B2 with optimized chunking (25MB chunks)
     updateUploadStatus(uploadId, {
       status: 'uploading',
-      stage: 'uploading video to cloud storage',
-      progress: 85
+      stage: 'uploading video to cloud storage - FIXED',
+      progress: 90
     });
     
-    logger.info(`☁️ Starting optimized B2 upload: ${filename}`);
+    logger.info(`☁️ FIXED Starting B2 upload: ${filename}`);
     
     // Create file object for B2 service
     const fileStats = fs.statSync(tempFilePath);
@@ -388,72 +399,77 @@ async function processVideoBackground(uploadId, tempFilePath, filename, original
       mimetype: 'video/mp4'
     };
     
-    // Upload with 25MB chunks for optimal memory usage
+    // Upload with optimized chunks - using the correct method name
     const videoUrl = await b2Service.uploadFileOptimized(fileObject, uploadId);
     
-    logger.info(`✅ Video uploaded successfully: ${videoUrl}`);
+    logger.info(`✅ FIXED Video uploaded successfully: ${videoUrl}`);
     
     // Step 4: Clean up temp file immediately after upload
     if (fs.existsSync(tempFilePath)) {
       fs.unlinkSync(tempFilePath);
-      logger.info(`🧹 Cleaned up temp file: ${tempFilePath}`);
+      logger.info(`🧹 FIXED Cleaned up temp file: ${tempFilePath}`);
     }
     
     // Step 5: Update database if videoId provided
     if (videoId && supabaseService) {
       try {
         updateUploadStatus(uploadId, {
-          stage: 'updating database',
+          stage: 'updating database - FIXED',
           progress: 98
         });
         
         await supabaseService.updateVideoMetadata(videoId, {
           url: videoUrl,
-          thumbnailUrl: thumbnailPath ? getB2ThumbnailUrl(baseName, timestamp) : null,
+          thumbnailUrl: thumbnailPath ? getB2ThumbnailUrlFixed(baseName, timestamp) : null,
           duration: videoMetadata?.duration || 0,
           width: videoMetadata?.width || 0,
           height: videoMetadata?.height || 0
         });
         
-        logger.info(`✅ Database updated for video ${videoId}`);
+        logger.info(`✅ FIXED Database updated for video ${videoId}`);
       } catch (supabaseError) {
-        logger.error(`⚠️ Database update failed: ${supabaseError.message}`);
+        logger.error(`⚠️ FIXED Database update failed: ${supabaseError.message}`);
       }
     }
     
     // Step 6: Mark as complete
     const finalData = {
       videoUrl,
-      thumbnailUrl: thumbnailPath ? getB2ThumbnailUrl(baseName, timestamp) : null,
+      thumbnailUrl: thumbnailPath ? getB2ThumbnailUrlFixed(baseName, timestamp) : null,
       metadata: videoMetadata,
       uploadComplete: true,
       publishReady: true,
-      completedAt: new Date().toISOString()
+      completedAt: new Date().toISOString(),
+      version: 'FIXED'
     };
     
     completeUploadStatus(uploadId, finalData);
     
-    // Log final memory state
-    memoryMonitor.logMemoryUsage(`Completed processing ${uploadId}`);
-    
-    logger.info(`🎉 Upload completed successfully: ${uploadId}`);
+    logger.info(`🎉 FIXED Upload completed successfully: ${uploadId}`);
     
   } catch (error) {
-    logger.error(`❌ Background processing failed for ${uploadId}:`, error);
+    logger.error(`❌ FIXED Background processing failed for ${uploadId}:`, {
+      error: error.message,
+      stack: error.stack,
+      tempFilePath,
+      filename
+    });
     
     // Clean up files on error
     if (tempFilePath && fs.existsSync(tempFilePath)) {
       try {
         fs.unlinkSync(tempFilePath);
+        logger.info(`🧹 FIXED Error cleanup - temp file removed: ${tempFilePath}`);
       } catch (cleanupError) {
-        logger.error(`❌ Error cleaning up temp file: ${cleanupError.message}`);
+        logger.error(`❌ FIXED Error cleanup failed: ${cleanupError.message}`);
       }
     }
     if (thumbnailPath && fs.existsSync(thumbnailPath)) {
       try {
         fs.unlinkSync(thumbnailPath);
+        logger.info(`🧹 FIXED Error cleanup - thumbnail removed: ${thumbnailPath}`);
       } catch (cleanupError) {
-        logger.error(`❌ Error cleaning up thumbnail: ${cleanupError.message}`);
+        logger.error(`❌ FIXED Thumbnail cleanup failed: ${cleanupError.message}`);
       }
     }
     
@@ -464,14 +480,14 @@ async function processVideoBackground(uploadId, tempFilePath, filename, original
 /**
  * Helper to construct B2 thumbnail URL
  */
-function getB2ThumbnailUrl(baseName, timestamp) {
+function getB2ThumbnailUrlFixed(baseName, timestamp) {
   const thumbnailFileName = `${baseName}_${timestamp}.jpg`;
   const bucketName = config.b2.buckets.thumbnail.name;
   return `https://${bucketName}.s3.eu-central-003.backblazeb2.com/${thumbnailFileName}`;
 }
 
 /**
- * Upload status endpoint with enhanced memory info
+ * Upload status endpoint
  */
 router.get('/status/:uploadId', (req, res) => {
   const { uploadId } = req.params;
@@ -483,15 +499,17 @@ router.get('/status/:uploadId', (req, res) => {
       return res.status(404).json({ 
         error: 'Upload not found',
         uploadId,
-        message: 'Upload may have expired or not yet started'
+        message: 'Upload may have expired or not yet started',
+        version: 'FIXED'
       });
     }
     
-    // Add server health info for debugging
+    // Add basic server health info
     const response = {
       ...status,
+      version: 'FIXED',
       serverHealth: {
-        memory: memoryMonitor.getMemoryInfo(),
+        memory: process.memoryUsage(),
         timestamp: new Date().toISOString()
       }
     };
@@ -499,34 +517,36 @@ router.get('/status/:uploadId', (req, res) => {
     res.json(response);
     
   } catch (error) {
-    logger.error(`❌ Status check error: ${error.message}`);
+    logger.error(`❌ FIXED Status check error: ${error.message}`);
     res.status(500).json({ 
       error: 'Status check failed',
-      details: error.message 
+      details: error.message,
+      version: 'FIXED'
     });
   }
 });
 
 /**
- * Health check endpoint with memory monitoring
+ * Health check endpoint
  */
 router.get('/health', (req, res) => {
-  const memInfo = memoryMonitor.getMemoryInfo();
+  const memInfo = process.memoryUsage();
   const health = {
     status: 'healthy',
-    service: 'upload-service-busboy',
-    ...memInfo,
-    activeUploads: Object.keys(require('../utils/status').getAllStatuses()).length,
+    service: 'FIXED-upload-service-busboy',
+    memory: {
+      rss: `${Math.floor(memInfo.rss / 1024 / 1024)}MB`,
+      heapUsed: `${Math.floor(memInfo.heapUsed / 1024 / 1024)}MB`,
+      heapTotal: `${Math.floor(memInfo.heapTotal / 1024 / 1024)}MB`
+    },
     timestamp: new Date().toISOString(),
-    maxFileSize: '100GB',
-    chunkSize: '25MB'
+    features: {
+      maxFileSize: '100GB',
+      chunkSize: '25MB',
+      version: 'FIXED',
+      memoryMonitorRemoved: true
+    }
   };
-  
-  // Return warning if memory usage is high
-  if (health.rssPercent > 80) {
-    health.status = 'warning';
-    health.message = 'High memory usage';
-  }
   
   res.json(health);
 });
@@ -537,10 +557,10 @@ router.get('/health', (req, res) => {
 router.get('/cors-test', (req, res) => {
   res.json({
     success: true,
-    message: 'Upload routes CORS working with Busboy',
+    message: 'FIXED Upload routes CORS working',
     origin: req.headers.origin || 'Unknown',
     timestamp: new Date().toISOString(),
-    service: 'busboy-upload'
+    service: 'FIXED-busboy-upload'
   });
 });
 
