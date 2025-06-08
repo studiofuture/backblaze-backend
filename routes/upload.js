@@ -14,90 +14,80 @@ const { generateUniqueFilename, getUploadPath, ensureDirectory } = require('../u
 const logger = require('../utils/logger');
 
 /**
- * MINIMAL DIAGNOSTIC: Strip everything except basic file reception
- * Goal: Find exactly where the crash occurs
+ * DELAYED RESPONSE: Wait for complete upload before responding (like Multer)
+ * This should fix the QUIC protocol error by not responding during active upload
  */
 router.post('/video', async (req, res) => {
   let uploadId;
   
   try {
     uploadId = `upload_${Date.now()}`;
-    logger.info(`🧪 MINIMAL DIAGNOSTIC upload started: ${uploadId}`);
+    logger.info(`⏳ DELAYED RESPONSE upload started: ${uploadId}`);
     
     // Log request details
     logger.info('📋 Request info:', {
       method: req.method,
-      url: req.url,
       contentType: req.headers['content-type'],
       contentLength: req.headers['content-length'],
       origin: req.headers.origin
     });
     
-    // Return immediately
-    res.json({ 
-      status: "uploading", 
-      uploadId,
-      message: "MINIMAL DIAGNOSTIC - Testing basic file reception only"
-    });
+    // DO NOT RESPOND IMMEDIATELY - Wait for upload completion
+    logger.info(`⏳ Waiting for upload completion before responding (like Multer)`);
 
-    // Start minimal processing
-    await handleMinimalUpload(req, uploadId);
+    // Process upload and wait for completion
+    const result = await handleDelayedResponseUpload(req, uploadId);
+    
+    // Only respond after upload is complete
+    logger.info(`✅ Upload completed, now sending response: ${uploadId}`);
+    res.json({
+      status: "success",
+      uploadId,
+      message: "Upload completed successfully - delayed response like Multer",
+      ...result
+    });
     
   } catch (error) {
-    logger.error(`❌ MINIMAL DIAGNOSTIC - Top level error: ${error.message}`);
+    logger.error(`❌ Upload failed: ${error.message}`);
     logger.error(`❌ Stack: ${error.stack}`);
+    
     if (uploadId) {
       failUploadStatus(uploadId, error);
     }
-    if (!res.headersSent) {
-      res.status(500).json({ error: error.message });
-    }
+    
+    // Send error response
+    res.status(500).json({ 
+      error: error.message,
+      uploadId: uploadId || 'unknown'
+    });
   }
 });
 
 /**
- * MINIMAL: Just receive file and save to disk - NO processing
+ * DELAYED RESPONSE: Process upload completely before resolving (like Multer behavior)
  */
-async function handleMinimalUpload(req, uploadId) {
+async function handleDelayedResponseUpload(req, uploadId) {
   return new Promise(async (resolve, reject) => {
-    logger.info(`🧪 STEP 1: Starting minimal upload handler for ${uploadId}`);
+    logger.info(`⏳ Starting delayed response upload handler for ${uploadId}`);
     
     try {
-      // Step 1: Directory creation with detailed logging
-      logger.info(`🧪 STEP 2: Creating directories...`);
+      // Step 1: Directory creation
+      logger.info(`📁 Creating directories...`);
+      await ensureDirectory('uploads');
+      await ensureDirectory('uploads/temp');
+      logger.info(`✅ Directories ready`);
       
-      try {
-        await ensureDirectory('uploads');
-        logger.info(`✅ uploads/ created/verified`);
-        
-        await ensureDirectory('uploads/temp');
-        logger.info(`✅ uploads/temp/ created/verified`);
-        
-        logger.info(`🧪 STEP 3: All directories ready`);
-      } catch (dirError) {
-        logger.error(`❌ Directory creation failed: ${dirError.message}`);
-        return reject(dirError);
-      }
-      
-      // Step 2: Busboy setup with minimal config
-      logger.info(`🧪 STEP 4: Setting up busboy...`);
-      
-      let bb;
-      try {
-        bb = busboy({ 
-          headers: req.headers,
-          limits: {
-            fileSize: 100 * 1024 * 1024, // 100MB for testing
-            files: 1,
-            fields: 5,
-            fieldSize: 1024
-          }
-        });
-        logger.info(`✅ Busboy created successfully`);
-      } catch (busboyError) {
-        logger.error(`❌ Busboy creation failed: ${busboyError.message}`);
-        return reject(busboyError);
-      }
+      // Step 2: Busboy setup
+      logger.info(`🔧 Setting up busboy...`);
+      const bb = busboy({ 
+        headers: req.headers,
+        limits: {
+          fileSize: 100 * 1024 * 1024 * 1024, // 100GB
+          files: 1,
+          fields: 10,
+          fieldSize: 1024 * 1024
+        }
+      });
       
       // Variables for tracking
       let fileReceived = false;
@@ -105,28 +95,21 @@ async function handleMinimalUpload(req, uploadId) {
       let tempFilePath;
       let writeStream;
       let totalBytesReceived = 0;
+      let uploadComplete = false;
+      let processingComplete = false;
 
-      // Step 3: Initialize status
-      logger.info(`🧪 STEP 5: Initializing status...`);
-      try {
-        initUploadStatus(uploadId, {
-          status: 'receiving',
-          stage: 'MINIMAL DIAGNOSTIC - starting file reception'
-        });
-        logger.info(`✅ Status initialized`);
-      } catch (statusError) {
-        logger.error(`❌ Status init failed: ${statusError.message}`);
-        // Continue anyway
-      }
+      // Initialize status
+      initUploadStatus(uploadId, {
+        status: 'receiving',
+        stage: 'delayed response - receiving file'
+      });
 
-      // Step 4: File handler - MINIMAL with max error handling
+      // File handler
       bb.on('file', (fieldname, file, info) => {
-        logger.info(`🧪 STEP 6: File handler triggered`);
-        logger.info(`📁 File info:`, {
-          fieldname: fieldname,
+        logger.info(`📥 File handler triggered:`, {
+          fieldname,
           filename: info.filename,
-          mimeType: info.mimeType,
-          encoding: info.encoding
+          mimeType: info.mimeType
         });
         
         try {
@@ -134,35 +117,23 @@ async function handleMinimalUpload(req, uploadId) {
           filename = generateUniqueFilename(info.filename);
           tempFilePath = getUploadPath('temp', filename);
           
-          logger.info(`📁 Generated paths:`, {
-            originalName: info.filename,
-            uniqueName: filename,
-            tempPath: tempFilePath
-          });
+          logger.info(`📁 Target: ${tempFilePath}`);
           
-          // Verify directory exists
+          // Verify directory
           const tempDir = path.dirname(tempFilePath);
           if (!fs.existsSync(tempDir)) {
-            logger.error(`❌ Directory missing at file handler: ${tempDir}`);
+            logger.error(`❌ Directory missing: ${tempDir}`);
             return reject(new Error(`Directory not found: ${tempDir}`));
           }
           
-          logger.info(`✅ Directory verified exists: ${tempDir}`);
-          
-          // Create write stream with detailed error handling
-          logger.info(`🧪 STEP 7: Creating write stream...`);
+          // Create write stream
           try {
             writeStream = fs.createWriteStream(tempFilePath);
-            logger.info(`✅ Write stream created: ${tempFilePath}`);
+            logger.info(`✅ Write stream created`);
             
-            // Add write stream error handler immediately
             writeStream.on('error', (streamError) => {
               logger.error(`❌ Write stream error: ${streamError.message}`);
               reject(streamError);
-            });
-            
-            writeStream.on('open', () => {
-              logger.info(`✅ Write stream opened successfully`);
             });
             
           } catch (streamCreateError) {
@@ -170,37 +141,35 @@ async function handleMinimalUpload(req, uploadId) {
             return reject(streamCreateError);
           }
           
-          // Step 5: File data handling - MINIMAL
-          logger.info(`🧪 STEP 8: Setting up file data handlers...`);
-          
+          // File data handling
           file.on('data', (chunk) => {
             try {
               totalBytesReceived += chunk.length;
               
-              // Log every 5MB
-              if (totalBytesReceived % (5 * 1024 * 1024) < chunk.length) {
+              // Log progress every 10MB
+              if (totalBytesReceived % (10 * 1024 * 1024) < chunk.length) {
                 logger.info(`📊 Received: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB`);
                 
-                // Update status
-                try {
-                  updateUploadStatus(uploadId, {
-                    progress: Math.min(90, Math.floor((totalBytesReceived / (req.headers['content-length'] || totalBytesReceived)) * 90)),
-                    stage: `received ${Math.floor(totalBytesReceived / 1024 / 1024)}MB`,
-                    uploadedBytes: totalBytesReceived
-                  });
-                } catch (statusUpdateError) {
-                  logger.warn(`⚠️ Status update failed: ${statusUpdateError.message}`);
-                  // Continue anyway
-                }
+                updateUploadStatus(uploadId, {
+                  progress: Math.min(50, Math.floor((totalBytesReceived / (req.headers['content-length'] || totalBytesReceived)) * 50)),
+                  stage: `receiving: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB`,
+                  uploadedBytes: totalBytesReceived
+                });
               }
             } catch (dataError) {
-              logger.error(`❌ Error in data handler: ${dataError.message}`);
+              logger.error(`❌ Data handler error: ${dataError.message}`);
               reject(dataError);
             }
           });
           
           file.on('end', () => {
-            logger.info(`✅ File stream ended. Total: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB`);
+            logger.info(`✅ File stream ended: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB total`);
+            
+            updateUploadStatus(uploadId, {
+              progress: 60,
+              stage: 'file reception complete, processing...',
+              status: 'processing'
+            });
             
             try {
               writeStream.end();
@@ -220,36 +189,27 @@ async function handleMinimalUpload(req, uploadId) {
           });
           
           writeStream.on('close', () => {
-            logger.info(`✅ Write stream closed successfully`);
+            logger.info(`✅ Write stream closed - starting background processing`);
+            uploadComplete = true;
             
-            // MINIMAL SUCCESS - just mark as complete
-            try {
-              const finalData = {
-                videoUrl: `file:///${tempFilePath}`,
-                uploadComplete: true,
-                receivedBytes: totalBytesReceived,
-                completedAt: new Date().toISOString()
-              };
-              
-              completeUploadStatus(uploadId, finalData);
-              logger.info(`🎉 MINIMAL DIAGNOSTIC SUCCESS: ${uploadId}`);
-              resolve();
-              
-            } catch (completeError) {
-              logger.error(`❌ Complete status failed: ${completeError.message}`);
-              reject(completeError);
-            }
+            // Start background processing
+            processVideoMinimal(uploadId, tempFilePath, filename, info.filename)
+              .then((result) => {
+                logger.info(`✅ Background processing completed for ${uploadId}`);
+                processingComplete = true;
+                
+                // Only resolve after BOTH upload AND processing are complete
+                resolve(result);
+              })
+              .catch((error) => {
+                logger.error(`❌ Background processing failed: ${error.message}`);
+                reject(error);
+              });
           });
           
-          // Step 6: Pipe file to write stream
-          logger.info(`🧪 STEP 9: Piping file to write stream...`);
-          try {
-            file.pipe(writeStream);
-            logger.info(`✅ File piped to write stream`);
-          } catch (pipeError) {
-            logger.error(`❌ Pipe failed: ${pipeError.message}`);
-            reject(pipeError);
-          }
+          // Pipe file to write stream
+          logger.info(`🔗 Piping file to write stream...`);
+          file.pipe(writeStream);
           
         } catch (fileHandlerError) {
           logger.error(`❌ File handler error: ${fileHandlerError.message}`);
@@ -257,30 +217,29 @@ async function handleMinimalUpload(req, uploadId) {
         }
       });
 
-      // Step 7: Other busboy handlers
+      // Other busboy handlers
       bb.on('field', (fieldname, value) => {
-        logger.info(`📝 Form field: ${fieldname} = ${value}`);
+        logger.debug(`📝 Field: ${fieldname} = ${value}`);
       });
 
       bb.on('finish', () => {
         logger.info(`🏁 Busboy finished for ${uploadId}`);
         
         if (!fileReceived) {
-          const error = new Error('No file was received by busboy');
+          const error = new Error('No file received');
           logger.error(`❌ ${error.message}`);
           reject(error);
         } else {
-          logger.info(`✅ Busboy finished successfully, file was received`);
+          logger.info(`✅ Busboy finished successfully, waiting for processing...`);
         }
       });
 
       bb.on('error', (error) => {
         logger.error(`❌ Busboy error: ${error.message}`);
-        logger.error(`❌ Busboy error stack: ${error.stack}`);
         reject(error);
       });
 
-      // Step 8: Request handlers
+      // Request handlers
       req.on('error', (error) => {
         logger.error(`❌ Request error: ${error.message}`);
         reject(error);
@@ -288,27 +247,81 @@ async function handleMinimalUpload(req, uploadId) {
 
       req.on('aborted', () => {
         logger.warn(`⚠️ Request aborted for ${uploadId}`);
-        reject(new Error('Request was aborted'));
+        reject(new Error('Request aborted'));
       });
 
-      // Step 9: Pipe request to busboy
-      logger.info(`🧪 STEP 10: Piping request to busboy...`);
+      // Pipe request to busboy
+      logger.info(`🔗 Piping request to busboy...`);
       try {
         req.pipe(bb);
-        logger.info(`✅ Request piped to busboy successfully`);
+        logger.info(`✅ Request piped successfully`);
       } catch (pipeError) {
         logger.error(`❌ Request pipe failed: ${pipeError.message}`);
         reject(pipeError);
       }
       
-      logger.info(`🧪 STEP 11: All handlers set up, waiting for data...`);
+      logger.info(`⏳ Waiting for upload and processing to complete...`);
       
     } catch (setupError) {
-      logger.error(`❌ Setup error in minimal handler: ${setupError.message}`);
-      logger.error(`❌ Setup error stack: ${setupError.stack}`);
+      logger.error(`❌ Setup error: ${setupError.message}`);
       reject(setupError);
     }
   });
+}
+
+/**
+ * Minimal processing - just complete the upload for testing
+ */
+async function processVideoMinimal(uploadId, tempFilePath, filename, originalName) {
+  try {
+    logger.info(`🔄 Starting minimal processing for ${uploadId}`);
+    
+    updateUploadStatus(uploadId, {
+      stage: 'processing complete',
+      progress: 90
+    });
+
+    // For testing - just verify file exists and get size
+    const fileStats = fs.statSync(tempFilePath);
+    const fileSizeMB = Math.floor(fileStats.size / 1024 / 1024);
+    
+    logger.info(`📊 File processed: ${fileSizeMB}MB`);
+    
+    // Clean up temp file
+    if (fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+      logger.info(`🧹 Cleaned up temp file`);
+    }
+    
+    // Complete status
+    const finalData = {
+      videoUrl: `https://example.com/videos/${filename}`,
+      uploadComplete: true,
+      fileSizeMB,
+      completedAt: new Date().toISOString()
+    };
+    
+    completeUploadStatus(uploadId, finalData);
+    
+    logger.info(`🎉 Processing completed successfully: ${uploadId}`);
+    return finalData;
+    
+  } catch (error) {
+    logger.error(`❌ Processing failed: ${error.message}`);
+    
+    // Clean up on error
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+        logger.info(`🧹 Cleaned up temp file after error`);
+      } catch (cleanupError) {
+        logger.error(`❌ Cleanup failed: ${cleanupError.message}`);
+      }
+    }
+    
+    failUploadStatus(uploadId, error);
+    throw error;
+  }
 }
 
 /**
@@ -345,12 +358,16 @@ router.get('/health', (req, res) => {
   const memInfo = process.memoryUsage();
   res.json({
     status: 'healthy',
-    service: 'minimal-diagnostic-upload',
+    service: 'delayed-response-upload',
     memory: {
       rss: `${Math.floor(memInfo.rss / 1024 / 1024)}MB`,
       heapUsed: `${Math.floor(memInfo.heapUsed / 1024 / 1024)}MB`
     },
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    features: {
+      responseStrategy: 'delayed-like-multer',
+      maxFileSize: '100GB'
+    }
   });
 });
 
