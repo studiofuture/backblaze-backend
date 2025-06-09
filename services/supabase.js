@@ -57,7 +57,7 @@ async function updateVideoMetadata(videoId, metadata) {
         const { data, error } = await serviceClient
           .from('videos')
           .update({
-            url: metadata.url,
+            storage_url: metadata.url,
             thumbnail_url: metadata.thumbnailUrl,
             duration: Math.round(metadata.duration || 0),
             width: metadata.width || 0,
