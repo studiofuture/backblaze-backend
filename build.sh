@@ -17,12 +17,12 @@ ffmpeg -version
 echo "📦 Installing Node.js dependencies..."
 npm ci --only=production
 
-# Create required directories
+# Create required directories - ADDED chunks directory
 echo "📁 Creating required directories..."
-mkdir -p uploads/thumbs uploads/temp
+mkdir -p uploads/thumbs uploads/temp uploads/chunks
 
-# Set proper permissions
+# Set proper permissions - ADDED chunks directory
 echo "🔐 Setting directory permissions..."
-chmod 755 uploads uploads/thumbs uploads/temp
+chmod 755 uploads uploads/thumbs uploads/temp uploads/chunks
 
 echo "✅ Build completed successfully!"

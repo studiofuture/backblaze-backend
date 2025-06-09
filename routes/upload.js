@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const busboy = require('busboy');
 const { 
   initUploadStatus, 
   updateUploadStatus, 
@@ -12,61 +11,48 @@ const {
 } = require('../utils/status');
 const { generateUniqueFilename, getUploadPath, ensureDirectory } = require('../utils/directory');
 
-// Import services - FULL FUNCTIONALITY RESTORED
+// Import refactored services
+const formdataHandler = require('../services/formdata-handler');
+const chunkAssembler = require('../services/chunk-assembler');
+const uploadProcessor = require('../services/upload-processor');
 const b2Service = require('../services/b2');
 const ffmpegService = require('../services/ffmpeg');
-const supabaseService = require('../services/supabase');
-const logger = require('../utils/logger');
-const { config } = require('../config');
 
 // DEBUG: Check logger configuration
 console.log('🔧 DEBUG: LOG_LEVEL =', process.env.LOG_LEVEL);
 console.log('🔧 DEBUG: NODE_ENV =', process.env.NODE_ENV);
 
 /**
- * COMPLETE FUNCTIONALITY: Full B2 + FFmpeg + Supabase with Delayed Response
- * Uses the working delayed response pattern to avoid QUIC protocol errors
+ * FORMDATA UPLOAD ROUTE
+ * POST /upload/video
+ * Handles traditional FormData uploads with Busboy
  */
 router.post('/video', async (req, res) => {
   let uploadId;
   
   try {
     uploadId = `upload_${Date.now()}`;
-    console.log(`🚀 COMPLETE FUNCTIONALITY upload started: ${uploadId}`);
+    console.log(`🚀 FormData upload started: ${uploadId}`);
     
-    // Log request details
-    console.log('📋 Request info:', {
-      method: req.method,
-      contentType: req.headers['content-type'],
-      contentLength: req.headers['content-length'],
-      origin: req.headers.origin
-    });
+    // Process upload using FormData handler service
+    const result = await formdataHandler.handleFormDataUpload(req, uploadId);
     
-    // DO NOT RESPOND IMMEDIATELY - Wait for complete processing
-    console.log(`⏳ Waiting for COMPLETE processing before responding (B2 + FFmpeg + Supabase)`);
-
-    // Process upload with FULL functionality and wait for completion
-    const result = await handleCompleteUploadWithDelayedResponse(req, uploadId);
-    
-    // Only respond after everything is complete
-    console.log(`✅ Complete processing finished, now sending response: ${uploadId}`);
+    console.log(`✅ FormData upload completed: ${uploadId}`);
     res.json({
       status: "success",
       uploadId,
-      message: "Upload completed successfully with full functionality",
+      message: "Upload completed successfully",
       url: result.videoUrl, 
       ...result
     });
     
   } catch (error) {
-    console.error(`❌ Complete upload failed: ${error.message}`);
-    console.error(`❌ Stack: ${error.stack}`);
+    console.error(`❌ FormData upload failed: ${error.message}`);
     
     if (uploadId) {
       failUploadStatus(uploadId, error);
     }
     
-    // Send error response
     res.status(500).json({ 
       error: error.message,
       uploadId: uploadId || 'unknown'
@@ -75,8 +61,103 @@ router.post('/video', async (req, res) => {
 });
 
 /**
- * Generate thumbnail from video URL (for frontend compatibility)
+ * RAW CHUNK UPLOAD ROUTE
+ * POST /upload/chunk
+ * Receives individual raw binary chunks
+ */
+router.post('/chunk', async (req, res) => {
+  try {
+    const uploadId = req.headers['x-upload-id'];
+    const chunkIndex = parseInt(req.headers['x-chunk-index']);
+    const totalChunks = parseInt(req.headers['x-total-chunks']);
+    
+    console.log(`📦 Receiving chunk ${chunkIndex}/${totalChunks} for upload ${uploadId}`);
+    
+    // Validate headers
+    if (!uploadId || chunkIndex === undefined || !totalChunks) {
+      return res.status(400).json({
+        error: 'Missing required headers: x-upload-id, x-chunk-index, x-total-chunks'
+      });
+    }
+    
+    // Process chunk using chunk assembler service
+    await chunkAssembler.saveChunk(req, uploadId, chunkIndex, totalChunks);
+    
+    console.log(`✅ Chunk ${chunkIndex} saved successfully`);
+    res.json({
+      success: true,
+      chunkIndex,
+      message: `Chunk ${chunkIndex} received successfully`
+    });
+    
+  } catch (error) {
+    console.error(`❌ Chunk upload error:`, error);
+    res.status(500).json({
+      error: 'Chunk upload failed',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * COMPLETE CHUNKED UPLOAD ROUTE
+ * POST /upload/complete-chunks
+ * Assembles chunks and processes the complete file
+ */
+router.post('/complete-chunks', async (req, res) => {
+  try {
+    const { uploadId, totalChunks, originalFilename, videoId } = req.body;
+    
+    console.log(`🔄 Starting chunk assembly for upload ${uploadId}`);
+    
+    // Validate request body
+    if (!uploadId || !totalChunks || !originalFilename) {
+      return res.status(400).json({
+        error: 'Missing required fields: uploadId, totalChunks, originalFilename'
+      });
+    }
+    
+    // Initialize processing status
+    initUploadStatus(uploadId, {
+      status: 'assembling',
+      stage: 'assembling chunks into final file',
+      progress: 55
+    });
+    
+    // Assemble chunks using chunk assembler service
+    const finalFilePath = await chunkAssembler.assembleChunks(uploadId, totalChunks, originalFilename);
+    console.log(`✅ Chunks assembled into: ${finalFilePath}`);
+    
+    // Process the assembled file using upload processor service
+    const result = await uploadProcessor.processVideo(uploadId, finalFilePath, originalFilename, videoId);
+    
+    console.log(`✅ Chunked upload processing completed: ${uploadId}`);
+    res.json({
+      status: "success",
+      uploadId,
+      message: "Chunked upload completed successfully",
+      url: result.videoUrl,
+      ...result
+    });
+    
+  } catch (error) {
+    console.error(`❌ Complete chunks processing failed:`, error);
+    
+    if (uploadId) {
+      failUploadStatus(uploadId, error);
+    }
+    
+    res.status(500).json({
+      error: error.message,
+      uploadId: uploadId || 'unknown'
+    });
+  }
+});
+
+/**
+ * GENERATE THUMBNAIL ROUTE
  * POST /upload/generate-thumbnail
+ * Generates thumbnail from video URL
  */
 router.post('/generate-thumbnail', async (req, res) => {
   try {
@@ -134,422 +215,9 @@ router.post('/generate-thumbnail', async (req, res) => {
 });
 
 /**
- * COMPLETE PROCESSING: Full pipeline with delayed response
- * B2 Upload + FFmpeg + Thumbnail + Supabase - all before responding
- */
-async function handleCompleteUploadWithDelayedResponse(req, uploadId) {
-  return new Promise(async (resolve, reject) => {
-    console.log(`🚀 Starting COMPLETE upload handler for ${uploadId}`);
-    
-    try {
-      // Step 1: Directory creation
-      console.log(`📁 Creating directories...`);
-      await ensureDirectory('uploads');
-      await ensureDirectory('uploads/temp');
-      await ensureDirectory('uploads/thumbs');
-      console.log(`✅ All directories ready`);
-      
-      // Step 2: Busboy setup
-      console.log(`🔧 Setting up busboy for complete processing...`);
-      const bb = busboy({ 
-        headers: req.headers,
-        limits: {
-          fileSize: 100 * 1024 * 1024 * 1024, // 100GB
-          files: 1,
-          fields: 10,
-          fieldSize: 1024 * 1024
-        }
-      });
-      
-      // Variables for tracking
-      let fileReceived = false;
-      let filename;
-      let originalName;
-      let tempFilePath;
-      let writeStream;
-      let totalBytesReceived = 0;
-      let formFields = {};
-
-      // Initialize status
-      initUploadStatus(uploadId, {
-        status: 'receiving',
-        stage: 'complete processing - receiving file'
-      });
-
-      // File handler with full validation
-      bb.on('file', (fieldname, file, info) => {
-        console.log(`📥 File handler triggered:`, {
-          fieldname,
-          filename: info.filename,
-          mimeType: info.mimeType,
-          encoding: info.encoding
-        });
-        
-        try {
-          // Accept common field names
-          const validFieldNames = ['video', 'file', 'upload', 'media'];
-          if (!validFieldNames.includes(fieldname)) {
-            console.warn(`⚠️ Unexpected field name: ${fieldname}. Accepting anyway.`);
-          }
-          
-          fileReceived = true;
-          originalName = info.filename;
-          filename = generateUniqueFilename(originalName);
-          tempFilePath = getUploadPath('temp', filename);
-          
-          console.log(`📁 Processing: ${originalName} -> ${filename}`);
-          console.log(`📁 Target: ${tempFilePath}`);
-          
-          // FULL FILE TYPE VALIDATION
-          const validVideoTypes = [
-            'video/mp4', 'video/quicktime', 'video/x-msvideo', 
-            'video/x-matroska', 'video/mpeg', 'video/webm',
-            'video/x-ms-wmv', 'video/3gpp'
-          ];
-          
-          if (!validVideoTypes.includes(info.mimeType)) {
-            const error = new Error(`Invalid file type: ${info.mimeType}. Only video files are allowed.`);
-            console.error(`❌ ${error.message}`);
-            return reject(error);
-          }
-          
-          // Verify directory
-          const tempDir = path.dirname(tempFilePath);
-          if (!fs.existsSync(tempDir)) {
-            console.error(`❌ Directory missing: ${tempDir}`);
-            return reject(new Error(`Directory not found: ${tempDir}`));
-          }
-          
-          // Create write stream
-          try {
-            writeStream = fs.createWriteStream(tempFilePath);
-            console.log(`✅ Write stream created successfully`);
-            
-            writeStream.on('error', (streamError) => {
-              console.error(`❌ Write stream error: ${streamError.message}`);
-              reject(streamError);
-            });
-            
-          } catch (streamCreateError) {
-            console.error(`❌ Write stream creation failed: ${streamCreateError.message}`);
-            return reject(streamCreateError);
-          }
-          
-          // File data handling with progress
-          file.on('data', (chunk) => {
-            try {
-              totalBytesReceived += chunk.length;
-              
-              // Update progress every 10MB
-              if (totalBytesReceived % (10 * 1024 * 1024) < chunk.length) {
-                const progressPercent = req.headers['content-length'] ? 
-                  Math.min(50, Math.floor((totalBytesReceived / req.headers['content-length']) * 50)) : 5;
-                
-                console.log(`📊 Received: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB`);
-                
-                updateUploadStatus(uploadId, {
-                  progress: progressPercent,
-                  stage: `receiving: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB`,
-                  uploadedBytes: totalBytesReceived
-                });
-              }
-            } catch (dataError) {
-              console.error(`❌ Data handler error: ${dataError.message}`);
-              reject(dataError);
-            }
-          });
-          
-          file.on('end', () => {
-            console.log(`✅ File stream ended: ${Math.floor(totalBytesReceived / 1024 / 1024)}MB total`);
-            
-            updateUploadStatus(uploadId, {
-              progress: 55,
-              stage: 'file reception complete, starting processing...',
-              status: 'processing',
-              uploadedBytes: totalBytesReceived
-            });
-            
-            try {
-              writeStream.end();
-              console.log(`✅ Write stream end() called`);
-            } catch (endError) {
-              console.error(`❌ Write stream end failed: ${endError.message}`);
-              reject(endError);
-            }
-          });
-          
-          file.on('error', (fileError) => {
-            console.error(`❌ File stream error: ${fileError.message}`);
-            if (writeStream && !writeStream.destroyed) {
-              writeStream.destroy();
-            }
-            reject(fileError);
-          });
-          
-          writeStream.on('close', () => {
-            console.log(`✅ Write stream closed - starting COMPLETE background processing`);
-            
-            // Extract form fields for processing
-            const videoId = formFields.videoId;
-            const metadata = formFields.metadata;
-            
-            // Start COMPLETE background processing
-            processVideoComplete(uploadId, tempFilePath, filename, originalName, videoId, metadata)
-              .then((result) => {
-                console.log(`✅ COMPLETE processing finished for ${uploadId}`);
-                resolve(result);
-              })
-              .catch((error) => {
-                console.error(`❌ COMPLETE processing failed: ${error.message}`);
-                reject(error);
-              });
-          });
-          
-          // Pipe file to write stream
-          console.log(`🔗 Piping file to write stream...`);
-          file.pipe(writeStream);
-          
-        } catch (fileHandlerError) {
-          console.error(`❌ File handler error: ${fileHandlerError.message}`);
-          reject(fileHandlerError);
-        }
-      });
-
-      // Handle form fields (videoId, metadata, etc.)
-      bb.on('field', (fieldname, value) => {
-        console.log(`📝 Form field: ${fieldname} = ${value}`);
-        formFields[fieldname] = value;
-      });
-
-      bb.on('finish', () => {
-        console.log(`🏁 Busboy finished for ${uploadId}`);
-        
-        if (!fileReceived) {
-          const error = new Error('No video file was uploaded. Please select a video file.');
-          console.error(`❌ ${error.message}`);
-          reject(error);
-        } else {
-          console.log(`✅ Busboy finished successfully, waiting for COMPLETE processing...`);
-        }
-      });
-
-      bb.on('error', (error) => {
-        console.error(`❌ Busboy error: ${error.message}`);
-        
-        // Clean up temp file
-        if (tempFilePath && fs.existsSync(tempFilePath)) {
-          try {
-            fs.unlinkSync(tempFilePath);
-            console.log(`🧹 Cleaned up temp file after busboy error`);
-          } catch (cleanupError) {
-            console.error(`❌ Error cleaning up: ${cleanupError.message}`);
-          }
-        }
-        reject(error);
-      });
-
-      // Request handlers
-      req.on('error', (error) => {
-        console.error(`❌ Request error: ${error.message}`);
-        reject(error);
-      });
-
-      req.on('aborted', () => {
-        console.warn(`⚠️ Request aborted for ${uploadId}`);
-        reject(new Error('Upload was cancelled'));
-      });
-
-      // Pipe request to busboy
-      console.log(`🔗 Piping request to busboy...`);
-      try {
-        req.pipe(bb);
-        console.log(`✅ Request piped successfully`);
-      } catch (pipeError) {
-        console.error(`❌ Request pipe failed: ${pipeError.message}`);
-        reject(pipeError);
-      }
-      
-      console.log(`⏳ Waiting for COMPLETE upload and processing...`);
-      
-    } catch (setupError) {
-      console.error(`❌ Setup error: ${setupError.message}`);
-      reject(setupError);
-    }
-  });
-}
-
-/**
- * COMPLETE PROCESSING: Full B2 + FFmpeg + Supabase pipeline
- * Everything that was in the original working version
- */
-async function processVideoComplete(uploadId, tempFilePath, filename, originalName, videoId, metadata) {
-  let thumbnailPath = null;
-  let videoMetadata = null;
-  
-  try {
-    console.log(`🚀 COMPLETE processing started for ${uploadId}`);
-    
-    // Step 1: Extract video metadata
-    updateUploadStatus(uploadId, {
-      stage: 'extracting video metadata',
-      progress: 60
-    });
-    
-    try {
-      videoMetadata = await ffmpegService.extractVideoMetadata(tempFilePath);
-      console.log(`✅ Metadata extracted for ${uploadId}:`, {
-        duration: videoMetadata.duration,
-        dimensions: `${videoMetadata.width}x${videoMetadata.height}`,
-        size: `${Math.floor(videoMetadata.size / 1024 / 1024)}MB`
-      });
-    } catch (metadataError) {
-      console.warn(`⚠️ Metadata extraction failed: ${metadataError.message}`);
-      videoMetadata = { duration: 0, width: 0, height: 0, size: 0 };
-    }
-
-    // Step 2: Generate thumbnail
-    updateUploadStatus(uploadId, {
-      stage: 'generating thumbnail',
-      progress: 70,
-      metadata: videoMetadata
-    });
-    
-    const timestamp = uploadId.split('_')[1];
-    const baseName = path.basename(originalName, path.extname(originalName));
-    let thumbnailUrl = null;
-    
-    try {
-      const thumbnailFileName = `${baseName}_${timestamp}.jpg`;
-      thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
-      
-      await ffmpegService.generateThumbnail(tempFilePath, thumbnailPath);
-      console.log(`✅ Thumbnail generated: ${thumbnailPath}`);
-      
-      updateUploadStatus(uploadId, {
-        stage: 'uploading thumbnail to B2',
-        progress: 75
-      });
-      
-      // Upload thumbnail to B2
-      thumbnailUrl = await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
-      console.log(`✅ Thumbnail uploaded to B2: ${thumbnailUrl}`);
-      
-      // Clean up local thumbnail immediately
-      if (fs.existsSync(thumbnailPath)) {
-        fs.unlinkSync(thumbnailPath);
-        console.log(`🧹 Local thumbnail cleaned up`);
-      }
-      
-      updateUploadStatus(uploadId, {
-        thumbnailUrl,
-        progress: 80
-      });
-      
-    } catch (thumbnailError) {
-      console.warn(`⚠️ Thumbnail generation/upload failed: ${thumbnailError.message}`);
-      // Continue without thumbnail
-    }
-
-    // Step 3: Upload video to B2 with optimized chunking
-    updateUploadStatus(uploadId, {
-      status: 'uploading',
-      stage: 'uploading video to B2 cloud storage',
-      progress: 85
-    });
-    
-    console.log(`☁️ Starting B2 video upload: ${filename}`);
-    
-    // Create file object for B2 service
-    const fileStats = fs.statSync(tempFilePath);
-    const fileObject = {
-      path: tempFilePath,
-      originalname: filename,
-      size: fileStats.size,
-      mimetype: 'video/mp4'
-    };
-    
-    // Upload with optimized 25MB chunks
-    const videoUrl = await b2Service.uploadFileOptimized(fileObject, uploadId);
-    console.log(`✅ Video uploaded successfully to B2: ${videoUrl}`);
-    
-    // Step 4: Clean up temp file immediately after B2 upload
-    if (fs.existsSync(tempFilePath)) {
-      fs.unlinkSync(tempFilePath);
-      console.log(`🧹 Temp file cleaned up: ${tempFilePath}`);
-    }
-    
-    // Step 5: Update Supabase database if videoId provided
-    if (videoId && supabaseService) {
-      try {
-        updateUploadStatus(uploadId, {
-          stage: 'updating database',
-          progress: 95
-        });
-        
-        await supabaseService.updateVideoMetadata(videoId, {
-          url: videoUrl,
-          thumbnailUrl: thumbnailUrl,
-          duration: videoMetadata?.duration || 0,
-          width: videoMetadata?.width || 0,
-          height: videoMetadata?.height || 0
-        });
-        
-        console.log(`✅ Supabase database updated for video ${videoId}`);
-      } catch (supabaseError) {
-        console.error(`⚠️ Database update failed: ${supabaseError.message}`);
-        // Continue anyway - upload was successful
-      }
-    }
-    
-    // Step 6: Complete with full data
-    const finalData = {
-      videoUrl,
-      thumbnailUrl: thumbnailUrl,
-      metadata: videoMetadata,
-      uploadComplete: true,
-      publishReady: true,
-      completedAt: new Date().toISOString(),
-      fileSizeMB: Math.floor(fileStats.size / 1024 / 1024)
-    };
-    
-    completeUploadStatus(uploadId, finalData);
-    
-    console.log(`🎉 COMPLETE processing successful: ${uploadId}`);
-    return finalData;
-    
-  } catch (error) {
-    console.error(`❌ COMPLETE processing failed for ${uploadId}:`, {
-      error: error.message,
-      stack: error.stack,
-      tempFilePath,
-      filename
-    });
-    
-    // Clean up files on error
-    if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try {
-        fs.unlinkSync(tempFilePath);
-        console.log(`🧹 Error cleanup - temp file removed: ${tempFilePath}`);
-      } catch (cleanupError) {
-        console.error(`❌ Error cleanup failed: ${cleanupError.message}`);
-      }
-    }
-    if (thumbnailPath && fs.existsSync(thumbnailPath)) {
-      try {
-        fs.unlinkSync(thumbnailPath);
-        console.log(`🧹 Error cleanup - thumbnail removed: ${thumbnailPath}`);
-      } catch (cleanupError) {
-        console.error(`❌ Thumbnail cleanup failed: ${cleanupError.message}`);
-      }
-    }
-    
-    failUploadStatus(uploadId, error);
-    throw error;
-  }
-}
-
-/**
- * Upload status endpoint
+ * UPLOAD STATUS ROUTE
+ * GET /upload/status/:uploadId
+ * Returns current upload status
  */
 router.get('/status/:uploadId', (req, res) => {
   const { uploadId } = req.params;
@@ -586,13 +254,15 @@ router.get('/status/:uploadId', (req, res) => {
 });
 
 /**
- * Health check endpoint
+ * HEALTH CHECK ROUTE
+ * GET /upload/health
+ * Returns service health status
  */
 router.get('/health', (req, res) => {
   const memInfo = process.memoryUsage();
   const health = {
     status: 'healthy',
-    service: 'complete-upload-service-delayed-response',
+    service: 'refactored-upload-service',
     memory: {
       rss: `${Math.floor(memInfo.rss / 1024 / 1024)}MB`,
       heapUsed: `${Math.floor(memInfo.heapUsed / 1024 / 1024)}MB`,
@@ -602,7 +272,8 @@ router.get('/health', (req, res) => {
     features: {
       maxFileSize: '100GB',
       chunkSize: '25MB',
-      responseStrategy: 'delayed-after-complete-processing',
+      formdataUploads: 'enabled',
+      chunkedUploads: 'enabled',
       b2Upload: 'enabled',
       thumbnailGeneration: 'enabled',
       supabaseIntegration: 'enabled',
@@ -614,15 +285,17 @@ router.get('/health', (req, res) => {
 });
 
 /**
- * CORS test endpoint
+ * CORS TEST ROUTE
+ * GET /upload/cors-test
+ * Tests CORS configuration
  */
 router.get('/cors-test', (req, res) => {
   res.json({
     success: true,
-    message: 'Complete Upload routes CORS working with delayed response',
+    message: 'Refactored Upload routes CORS working',
     origin: req.headers.origin || 'Unknown',
     timestamp: new Date().toISOString(),
-    service: 'complete-busboy-upload-delayed-response'
+    service: 'refactored-upload-service'
   });
 });
 

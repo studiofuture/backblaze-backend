@@ -2,11 +2,12 @@ const mkdirp = require('mkdirp');
 const path = require('path');
 const logger = require('./logger');
 
-// Required directories
+// Required directories - ADDED chunks directory
 const REQUIRED_DIRS = [
   'uploads',
   'uploads/thumbs',
-  'uploads/temp'
+  'uploads/temp',
+  'uploads/chunks'
 ];
 
 /**
