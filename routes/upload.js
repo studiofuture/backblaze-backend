@@ -99,21 +99,44 @@ router.post('/chunk', async (req, res) => {
   }
 });
 
-/**
- * COMPLETE CHUNKED UPLOAD ROUTE
- * POST /upload/complete-chunks
- * Assembles chunks and processes the complete file
- */
 router.post('/complete-chunks', async (req, res) => {
+  let uploadId; // Declare here so it's available in catch block
+  
   try {
-    const { uploadId, totalChunks, originalFilename, videoId } = req.body;
+    // ADD DEBUGGING HERE:
+    console.log('📋 Complete chunks request body:', req.body);
+    console.log('📋 Content-Type:', req.headers['content-type']);
+    console.log('📋 Request headers:', Object.keys(req.headers));
+    
+    const { uploadId: reqUploadId, totalChunks, originalFilename, videoId } = req.body;
+    uploadId = reqUploadId; // Assign to outer scope
+    
+    console.log('📋 Extracted fields:', {
+      uploadId,
+      totalChunks,
+      originalFilename,
+      videoId
+    });
     
     console.log(`🔄 Starting chunk assembly for upload ${uploadId}`);
     
     // Validate request body
     if (!uploadId || !totalChunks || !originalFilename) {
+      console.error('❌ Missing required fields:', {
+        uploadId: !!uploadId,
+        totalChunks: !!totalChunks,
+        originalFilename: !!originalFilename
+      });
+      
       return res.status(400).json({
-        error: 'Missing required fields: uploadId, totalChunks, originalFilename'
+        error: 'Missing required fields: uploadId, totalChunks, originalFilename',
+        received: { uploadId, totalChunks, originalFilename },
+        expectedFormat: {
+          uploadId: 'string',
+          totalChunks: 'number',
+          originalFilename: 'string',
+          videoId: 'string (optional)'
+        }
       });
     }
     
@@ -142,6 +165,7 @@ router.post('/complete-chunks', async (req, res) => {
     
   } catch (error) {
     console.error(`❌ Complete chunks processing failed:`, error);
+    console.error(`❌ Error stack:`, error.stack);
     
     if (uploadId) {
       failUploadStatus(uploadId, error);
@@ -149,7 +173,8 @@ router.post('/complete-chunks', async (req, res) => {
     
     res.status(500).json({
       error: error.message,
-      uploadId: uploadId || 'unknown'
+      uploadId: uploadId || 'unknown',
+      details: process.env.NODE_ENV !== 'production' ? error.stack : undefined
     });
   }
 });
