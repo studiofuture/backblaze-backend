@@ -64,6 +64,8 @@ async function saveChunk(req, uploadId, chunkIndex, totalChunks) {
  * @param {string} originalFilename - Original filename from client
  * @returns {Promise<string>} - Path to assembled file
  */
+// services/chunk-assembler.js - Replace assembleChunks function
+
 async function assembleChunks(uploadId, totalChunks, originalFilename) {
   console.log(`🔧 Assembling ${totalChunks} chunks for ${uploadId}`);
   
@@ -78,34 +80,48 @@ async function assembleChunks(uploadId, totalChunks, originalFilename) {
   let assembledBytes = 0;
   
   try {
-    // Combine chunks in order
+    // STREAMING ASSEMBLY - Don't load chunks into memory
     for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
       const chunkPath = path.join('uploads/chunks', `${uploadId}_chunk_${chunkIndex}`);
       
-      console.log(`📎 Processing chunk ${chunkIndex}: ${chunkPath}`);
+      console.log(`📎 Streaming chunk ${chunkIndex}: ${chunkPath}`);
       
       // Check if chunk exists
       if (!fs.existsSync(chunkPath)) {
         throw new Error(`Missing chunk ${chunkIndex} at ${chunkPath}`);
       }
       
-      // Read and append chunk
-      const chunkData = fs.readFileSync(chunkPath);
-      writeStream.write(chunkData);
-      assembledBytes += chunkData.length;
-      
-      console.log(`✅ Appended chunk ${chunkIndex} (${chunkData.length} bytes)`);
-      
-      // Update progress
-      const progressPercent = 55 + Math.floor(((chunkIndex + 1) / totalChunks) * 5); // 55-60%
-      updateUploadStatus(uploadId, {
-        progress: progressPercent,
-        stage: `assembling chunk ${chunkIndex + 1}/${totalChunks}`
+      // STREAM chunk directly to output file (no memory buffering)
+      const chunkReadStream = fs.createReadStream(chunkPath);
+      await new Promise((resolve, reject) => {
+        chunkReadStream.on('data', (data) => {
+          writeStream.write(data);
+          assembledBytes += data.length;
+        });
+        
+        chunkReadStream.on('end', () => {
+          console.log(`✅ Streamed chunk ${chunkIndex}`);
+          resolve();
+        });
+        
+        chunkReadStream.on('error', reject);
       });
       
       // Clean up chunk file immediately
       fs.unlinkSync(chunkPath);
       console.log(`🧹 Cleaned up chunk file: ${chunkPath}`);
+      
+      // Update progress
+      const progressPercent = 55 + Math.floor(((chunkIndex + 1) / totalChunks) * 5);
+      updateUploadStatus(uploadId, {
+        progress: progressPercent,
+        stage: `streaming chunk ${chunkIndex + 1}/${totalChunks}`
+      });
+      
+      // Force garbage collection every 10 chunks
+      if (chunkIndex % 10 === 0 && global.gc) {
+        global.gc();
+      }
     }
     
     // Close the write stream
@@ -117,18 +133,6 @@ async function assembleChunks(uploadId, totalChunks, originalFilename) {
     });
     
     console.log(`✅ File assembly complete: ${finalFilePath} (${assembledBytes} bytes)`);
-    
-    // Clean up chunks directory if empty
-    try {
-      const chunksDir = 'uploads/chunks';
-      const remainingFiles = fs.readdirSync(chunksDir).filter(file => file.startsWith(uploadId));
-      if (remainingFiles.length === 0) {
-        console.log(`🧹 All chunks for ${uploadId} cleaned up`);
-      }
-    } catch (cleanupError) {
-      console.warn(`⚠️ Chunk cleanup warning:`, cleanupError.message);
-    }
-    
     return finalFilePath;
     
   } catch (error) {
