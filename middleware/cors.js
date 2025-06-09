@@ -39,7 +39,7 @@ function corsMiddleware(req, res, next) {
   
   // Set other CORS headers
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, x-chunk-index, x-total-chunks, x-chunk-size, Accept');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-upload-id, x-chunk-index, x-total-chunks, x-chunk-size, x-file-type, x-original-filename, Accept');
   res.header('Access-Control-Allow-Credentials', 'true');
   
   // Handle preflight OPTIONS requests immediately
