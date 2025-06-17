@@ -240,6 +240,230 @@ router.post('/generate-thumbnail', async (req, res) => {
 });
 
 /**
+ * CUSTOM THUMBNAIL UPLOAD ROUTE
+ * POST /upload/thumbnail
+ * Handles user-uploaded custom thumbnail images
+ */
+router.post('/thumbnail', async (req, res) => {
+  let uploadId;
+  
+  try {
+    uploadId = `thumbnail_${Date.now()}`;
+    console.log(`🖼️ Custom thumbnail upload started: ${uploadId}`);
+    
+    // Directory setup
+    await ensureDirectory('uploads');
+    await ensureDirectory('uploads/thumbs');
+    
+    // Busboy setup for image uploads
+    const bb = busboy({ 
+      headers: req.headers,
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB max for images
+        files: 1,
+        fields: 10,
+        fieldSize: 1024 * 1024
+      }
+    });
+    
+    let fileReceived = false;
+    let filename;
+    let originalName;
+    let tempFilePath;
+    let writeStream;
+    let formFields = {};
+
+    // File handler
+    bb.on('file', (fieldname, file, info) => {
+      console.log(`📥 Thumbnail file handler triggered:`, {
+        fieldname,
+        filename: info.filename,
+        mimeType: info.mimeType,
+        encoding: info.encoding
+      });
+      
+      try {
+        // Accept common field names for thumbnails
+        const validFieldNames = ['thumbnail', 'image', 'file', 'upload'];
+        if (!validFieldNames.includes(fieldname)) {
+          console.warn(`⚠️ Unexpected field name: ${fieldname}. Accepting anyway.`);
+        }
+        
+        fileReceived = true;
+        originalName = info.filename;
+        filename = generateUniqueFilename(originalName);
+        tempFilePath = getUploadPath('thumbs', filename);
+        
+        console.log(`📁 Processing thumbnail: ${originalName} -> ${filename}`);
+        
+        // Image type validation
+        const validImageTypes = [
+          'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'
+        ];
+        
+        if (!validImageTypes.includes(info.mimeType)) {
+          const error = new Error(`Invalid image type: ${info.mimeType}. Only JPEG, PNG, WebP, and GIF images are allowed.`);
+          console.error(`❌ ${error.message}`);
+          return file.resume(); // Drain the file stream
+        }
+        
+        // Create write stream
+        writeStream = fs.createWriteStream(tempFilePath);
+        
+        writeStream.on('error', (streamError) => {
+          console.error(`❌ Thumbnail write stream error: ${streamError.message}`);
+        });
+        
+        // File data handling
+        file.on('data', (chunk) => {
+          // No progress tracking needed for small images
+        });
+        
+        file.on('end', () => {
+          console.log(`✅ Thumbnail file stream ended`);
+          writeStream.end();
+        });
+        
+        file.on('error', (fileError) => {
+          console.error(`❌ Thumbnail file stream error: ${fileError.message}`);
+          if (writeStream && !writeStream.destroyed) {
+            writeStream.destroy();
+          }
+        });
+        
+        writeStream.on('close', async () => {
+          console.log(`✅ Thumbnail write stream closed - processing`);
+          
+          try {
+            // Upload thumbnail directly to B2
+            const thumbnailUrl = await b2Service.uploadThumbnail(tempFilePath, filename);
+            console.log(`✅ Custom thumbnail uploaded to B2: ${thumbnailUrl}`);
+            
+            // Clean up local file
+            if (fs.existsSync(tempFilePath)) {
+              fs.unlinkSync(tempFilePath);
+              console.log(`🧹 Local thumbnail cleaned up: ${tempFilePath}`);
+            }
+            
+            // Get video ID from form fields if provided
+            const videoId = formFields.videoId;
+            
+            // Update database if videoId provided
+            if (videoId) {
+              try {
+                const supabaseService = require('../services/supabase');
+                await supabaseService.updateThumbnail(videoId, thumbnailUrl);
+                console.log(`✅ Database updated with custom thumbnail for video ${videoId}`);
+              } catch (dbError) {
+                console.warn(`⚠️ Database update failed: ${dbError.message}`);
+                // Continue anyway - upload was successful
+              }
+            }
+            
+            res.json({
+              success: true,
+              thumbnailUrl,
+              message: 'Custom thumbnail uploaded successfully',
+              uploadId,
+              videoId: videoId || null
+            });
+            
+          } catch (uploadError) {
+            console.error(`❌ Custom thumbnail upload failed: ${uploadError.message}`);
+            
+            // Clean up temp file on error
+            if (fs.existsSync(tempFilePath)) {
+              fs.unlinkSync(tempFilePath);
+            }
+            
+            res.status(500).json({
+              error: 'Custom thumbnail upload failed',
+              details: uploadError.message,
+              uploadId
+            });
+          }
+        });
+        
+        // Pipe file to write stream
+        file.pipe(writeStream);
+        
+      } catch (fileHandlerError) {
+        console.error(`❌ Thumbnail file handler error: ${fileHandlerError.message}`);
+        file.resume(); // Drain the stream
+      }
+    });
+
+    // Handle form fields (videoId, etc.)
+    bb.on('field', (fieldname, value) => {
+      console.log(`📝 Thumbnail form field: ${fieldname} = ${value}`);
+      formFields[fieldname] = value;
+    });
+
+    bb.on('finish', () => {
+      console.log(`🏁 Thumbnail busboy finished for ${uploadId}`);
+      
+      if (!fileReceived) {
+        return res.status(400).json({
+          error: 'No thumbnail image was uploaded',
+          message: 'Please select an image file (JPEG, PNG, WebP, or GIF)',
+          uploadId
+        });
+      }
+    });
+
+    bb.on('error', (error) => {
+      console.error(`❌ Thumbnail busboy error: ${error.message}`);
+      
+      // Clean up temp file
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch (cleanupError) {
+          console.error(`❌ Thumbnail cleanup error: ${cleanupError.message}`);
+        }
+      }
+      
+      res.status(500).json({
+        error: 'Thumbnail upload failed',
+        details: error.message,
+        uploadId
+      });
+    });
+
+    // Request handlers
+    req.on('error', (error) => {
+      console.error(`❌ Thumbnail request error: ${error.message}`);
+      res.status(500).json({
+        error: 'Thumbnail upload request failed',
+        details: error.message,
+        uploadId
+      });
+    });
+
+    req.on('aborted', () => {
+      console.warn(`⚠️ Thumbnail request aborted for ${uploadId}`);
+      if (!res.headersSent) {
+        res.status(400).json({
+          error: 'Thumbnail upload was cancelled',
+          uploadId
+        });
+      }
+    });
+
+    // Pipe request to busboy
+    req.pipe(bb);
+    
+  } catch (error) {
+    console.error(`❌ Custom thumbnail upload setup error: ${error.message}`);
+    res.status(500).json({
+      error: 'Thumbnail upload setup failed',
+      details: error.message,
+      uploadId: uploadId || 'unknown'
+    });
+  }
+});
+
+/**
  * UPLOAD STATUS ROUTE
  * GET /upload/status/:uploadId
  * Returns current upload status
