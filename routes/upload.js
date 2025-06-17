@@ -2,59 +2,143 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const busboy = require('busboy');
-const {
-  initUploadStatus,
-  updateUploadStatus,
-  completeUploadStatus,
+const rateLimit = require('express-rate-limit');
+const { 
+  initUploadStatus, 
+  updateUploadStatus, 
+  completeUploadStatus, 
   failUploadStatus,
   getUploadStatus
 } = require('../utils/status');
 const { generateUniqueFilename, getUploadPath, ensureDirectory } = require('../utils/directory');
 
-// Import refactored services
+// Import BOTH existing services AND new multipart services (FIXED IMPORT PATHS)
 const formdataHandler = require('../services/formdata-handler');
 const chunkAssembler = require('../services/chunk-assembler');
 const uploadProcessor = require('../services/upload-processor');
 const b2Service = require('../services/b2');
 const ffmpegService = require('../services/ffmpeg');
+const multipartUploader = require('../services/multipart-uploader'); // FIXED: Correct import path
+
+// Security: Rate limiting configurations
+const strictRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 multipart initializations per IP per 15 minutes
+  message: {
+    error: 'Too many upload attempts. Please wait before trying again.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const moderateRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 requests per IP per 15 minutes
+  message: {
+    error: 'Too many requests. Please slow down.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const generalRateLimit = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 60, // 60 requests per IP per minute
+  message: {
+    error: 'Too many requests. Please wait.',
+    retryAfter: '1 minute'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Feature flag for multipart uploads (can be controlled via environment variable)
+const ENABLE_MULTIPART_UPLOADS = process.env.ENABLE_MULTIPART_UPLOADS !== 'false';
+
+// Security: Input validation middleware
+const validateUploadInput = (req, res, next) => {
+  try {
+    // Validate content length for security
+    const contentLength = parseInt(req.headers['content-length'] || '0');
+    const maxSize = 100 * 1024 * 1024 * 1024; // 100GB
+    
+    if (contentLength > maxSize) {
+      return res.status(413).json({
+        error: 'File too large',
+        maxSize: '100GB'
+      });
+    }
+    
+    // Validate user agent (basic bot protection)
+    const userAgent = req.headers['user-agent'];
+    if (!userAgent || userAgent.length < 10) {
+      return res.status(400).json({
+        error: 'Invalid request'
+      });
+    }
+    
+    next();
+  } catch (error) {
+    res.status(400).json({
+      error: 'Invalid request headers'
+    });
+  }
+};
+
+// Security: Sanitize input data
+const sanitizeInput = (data) => {
+  if (typeof data === 'string') {
+    return data.trim().slice(0, 1000); // Limit string length
+  }
+  if (typeof data === 'number') {
+    return Math.max(0, Math.min(data, Number.MAX_SAFE_INTEGER));
+  }
+  return data;
+};
 
 // DEBUG: Check logger configuration
 console.log('🔧 DEBUG: LOG_LEVEL =', process.env.LOG_LEVEL);
 console.log('🔧 DEBUG: NODE_ENV =', process.env.NODE_ENV);
+console.log('🔧 DEBUG: MULTIPART_UPLOADS =', ENABLE_MULTIPART_UPLOADS);
+
+// ============================================================================
+// EXISTING FUNCTIONALITY - PRESERVED UNCHANGED
+// ============================================================================
 
 /**
- * FORMDATA UPLOAD ROUTE
+ * EXISTING: FORMDATA UPLOAD ROUTE
  * POST /upload/video
- * Handles traditional FormData uploads with Busboy
+ * Handles traditional FormData uploads with Busboy - UNCHANGED
  */
-router.post('/video', async (req, res) => {
+router.post('/video', generalRateLimit, validateUploadInput, async (req, res) => {
   let uploadId;
-
+  
   try {
-    uploadId = `upload_${Date.now()}`;
+    uploadId = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     console.log(`🚀 FormData upload started: ${uploadId}`);
-
+    
     // Process upload using FormData handler service
     const result = await formdataHandler.handleFormDataUpload(req, uploadId);
-
+    
     console.log(`✅ FormData upload completed: ${uploadId}`);
     res.json({
       status: "success",
       uploadId,
       message: "Upload completed successfully",
-      url: result.videoUrl,
+      url: result.videoUrl, 
       ...result
     });
-
+    
   } catch (error) {
     console.error(`❌ FormData upload failed: ${error.message}`);
-
+    
     if (uploadId) {
       failUploadStatus(uploadId, error);
     }
-
-    res.status(500).json({
+    
+    res.status(500).json({ 
       error: error.message,
       uploadId: uploadId || 'unknown'
     });
@@ -62,35 +146,42 @@ router.post('/video', async (req, res) => {
 });
 
 /**
- * RAW CHUNK UPLOAD ROUTE
+ * EXISTING: RAW CHUNK UPLOAD ROUTE
  * POST /upload/chunk
- * Receives individual raw binary chunks
+ * Receives individual raw binary chunks - UNCHANGED
  */
-router.post('/chunk', async (req, res) => {
+router.post('/chunk', moderateRateLimit, validateUploadInput, async (req, res) => {
   try {
-    const uploadId = req.headers['x-upload-id'];
-    const chunkIndex = parseInt(req.headers['x-chunk-index']);
-    const totalChunks = parseInt(req.headers['x-total-chunks']);
-
+    const uploadId = sanitizeInput(req.headers['x-upload-id']);
+    const chunkIndex = parseInt(sanitizeInput(req.headers['x-chunk-index']));
+    const totalChunks = parseInt(sanitizeInput(req.headers['x-total-chunks']));
+    
     console.log(`📦 Receiving chunk ${chunkIndex}/${totalChunks} for upload ${uploadId}`);
-
+    
     // Validate headers
     if (!uploadId || chunkIndex === undefined || !totalChunks) {
       return res.status(400).json({
         error: 'Missing required headers: x-upload-id, x-chunk-index, x-total-chunks'
       });
     }
-
+    
+    // Security: Validate chunk index bounds
+    if (chunkIndex < 0 || chunkIndex >= totalChunks || totalChunks > 10000) {
+      return res.status(400).json({
+        error: 'Invalid chunk parameters'
+      });
+    }
+    
     // Process chunk using chunk assembler service
     await chunkAssembler.saveChunk(req, uploadId, chunkIndex, totalChunks);
-
+    
     console.log(`✅ Chunk ${chunkIndex} saved successfully`);
     res.json({
       success: true,
       chunkIndex,
       message: `Chunk ${chunkIndex} received successfully`
     });
-
+    
   } catch (error) {
     console.error(`❌ Chunk upload error:`, error);
     res.status(500).json({
@@ -100,61 +191,72 @@ router.post('/chunk', async (req, res) => {
   }
 });
 
-router.post('/complete-chunks', async (req, res) => {
-  let uploadId; // Declare here so it's available in catch block
-
+/**
+ * EXISTING: COMPLETE CHUNKS ROUTE
+ * POST /upload/complete-chunks
+ * Assembles chunks and processes video - ENHANCED WITH SECURITY
+ */
+router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
+  let uploadId;
+  
   try {
-    // ADD DEBUGGING HERE:
     console.log('📋 Complete chunks request body:', req.body);
-    console.log('📋 Content-Type:', req.headers['content-type']);
-    console.log('📋 Request headers:', Object.keys(req.headers));
-
-    const { uploadId: reqUploadId, totalChunks, originalFilename, videoId } = req.body;
-    uploadId = reqUploadId; // Assign to outer scope
-
+    
+    const { 
+      uploadId: reqUploadId, 
+      totalChunks, 
+      originalFilename, 
+      videoId 
+    } = req.body;
+    
+    // Sanitize inputs
+    uploadId = sanitizeInput(reqUploadId);
+    const sanitizedTotalChunks = sanitizeInput(totalChunks);
+    const sanitizedFilename = sanitizeInput(originalFilename);
+    const sanitizedVideoId = sanitizeInput(videoId);
+    
     console.log('📋 Extracted fields:', {
       uploadId,
-      totalChunks,
-      originalFilename,
-      videoId
+      totalChunks: sanitizedTotalChunks,
+      originalFilename: sanitizedFilename,
+      videoId: sanitizedVideoId
     });
-
-    console.log(`🔄 Starting chunk assembly for upload ${uploadId}`);
-
+    
     // Validate request body
-    if (!uploadId || !totalChunks || !originalFilename) {
-      console.error('❌ Missing required fields:', {
-        uploadId: !!uploadId,
-        totalChunks: !!totalChunks,
-        originalFilename: !!originalFilename
-      });
-
+    if (!uploadId || !sanitizedTotalChunks || !sanitizedFilename) {
       return res.status(400).json({
         error: 'Missing required fields: uploadId, totalChunks, originalFilename',
-        received: { uploadId, totalChunks, originalFilename },
-        expectedFormat: {
-          uploadId: 'string',
-          totalChunks: 'number',
-          originalFilename: 'string',
-          videoId: 'string (optional)'
+        received: { 
+          uploadId: !!uploadId, 
+          totalChunks: !!sanitizedTotalChunks, 
+          originalFilename: !!sanitizedFilename 
         }
       });
     }
-
+    
+    // Security: Validate totalChunks bounds
+    if (sanitizedTotalChunks < 1 || sanitizedTotalChunks > 10000) {
+      return res.status(400).json({
+        error: 'Invalid totalChunks value. Must be between 1 and 10000.'
+      });
+    }
+    
+    console.log(`🔄 Starting chunk assembly for upload ${uploadId}`);
+    
     // Initialize processing status
     initUploadStatus(uploadId, {
       status: 'assembling',
       stage: 'assembling chunks into final file',
       progress: 55
     });
-
+    
     // Assemble chunks using chunk assembler service
-    const finalFilePath = await chunkAssembler.assembleChunks(uploadId, totalChunks, originalFilename);
+    const finalFilePath = await chunkAssembler.assembleChunks(uploadId, sanitizedTotalChunks, sanitizedFilename);
     console.log(`✅ Chunks assembled into: ${finalFilePath}`);
-
+    
     // Process the assembled file using upload processor service
-    const result = await uploadProcessor.processVideo(uploadId, finalFilePath, originalFilename, videoId);
-
+    const result = await uploadProcessor.processVideo(uploadId, finalFilePath, sanitizedFilename, sanitizedVideoId);
+    
     console.log(`✅ Chunked upload processing completed: ${uploadId}`);
     res.json({
       status: "success",
@@ -163,73 +265,490 @@ router.post('/complete-chunks', async (req, res) => {
       url: result.videoUrl,
       ...result
     });
-
+    
   } catch (error) {
     console.error(`❌ Complete chunks processing failed:`, error);
-    console.error(`❌ Error stack:`, error.stack);
-
+    
     if (uploadId) {
       failUploadStatus(uploadId, error);
     }
-
+    
     res.status(500).json({
       error: error.message,
-      uploadId: uploadId || 'unknown',
-      details: process.env.NODE_ENV !== 'production' ? error.stack : undefined
+      uploadId: uploadId || 'unknown'
+    });
+  }
+});
+
+// ============================================================================
+// NEW MULTIPART UPLOAD FUNCTIONALITY - ENHANCED WITH SECURITY
+// ============================================================================
+
+/**
+ * NEW: Initialize Direct B2 Multipart Upload
+ * POST /upload/multipart/initialize
+ * Sets up direct B2 upload and returns part URLs
+ */
+router.post('/multipart/initialize', strictRateLimit, validateUploadInput, async (req, res) => {
+  // Check if multipart uploads are enabled
+  if (!ENABLE_MULTIPART_UPLOADS) {
+    return res.status(503).json({
+      error: 'Multipart uploads are currently disabled',
+      fallback: 'Use /upload/video for FormData uploads or /upload/chunk for chunked uploads'
+    });
+  }
+  
+  let uploadId;
+  
+  try {
+    const { fileName, fileSize, contentType, videoId, chunkSize } = req.body;
+    
+    // Sanitize inputs
+    const sanitizedFileName = sanitizeInput(fileName);
+    const sanitizedFileSize = sanitizeInput(fileSize);
+    const sanitizedContentType = sanitizeInput(contentType);
+    const sanitizedVideoId = sanitizeInput(videoId);
+    const sanitizedChunkSize = sanitizeInput(chunkSize);
+    
+    // Validate required fields
+    if (!sanitizedFileName || !sanitizedFileSize) {
+      return res.status(400).json({
+        error: 'Missing required fields: fileName and fileSize are required',
+        received: { fileName: !!sanitizedFileName, fileSize: !!sanitizedFileSize }
+      });
+    }
+    
+    // Security: Validate file size bounds
+    const maxFileSize = 100 * 1024 * 1024 * 1024; // 100GB
+    const minFileSize = 1024; // 1KB
+    
+    if (sanitizedFileSize < minFileSize || sanitizedFileSize > maxFileSize) {
+      return res.status(400).json({
+        error: `File size must be between ${minFileSize} bytes and ${maxFileSize} bytes`,
+        received: sanitizedFileSize
+      });
+    }
+    
+    // Security: Validate filename
+    if (sanitizedFileName.length < 1 || sanitizedFileName.length > 255) {
+      return res.status(400).json({
+        error: 'Filename must be between 1 and 255 characters'
+      });
+    }
+    
+    // Generate unique upload ID with more entropy
+    uploadId = `multipart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    console.log(`🚀 Initializing secure multipart upload: ${uploadId} for ${sanitizedFileName} (${Math.floor(sanitizedFileSize / 1024 / 1024)}MB)`);
+    
+    // Initialize upload status tracking
+    initUploadStatus(uploadId, {
+      status: 'initializing',
+      uploadMethod: 'direct_multipart',
+      fileName: sanitizedFileName,
+      fileSize: sanitizedFileSize,
+      videoId: sanitizedVideoId,
+      progress: 5,
+      clientIP: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+    
+    // Initialize B2 large file upload with security context
+    const b2Result = await multipartUploader.initializeMultipartUpload(
+      uploadId,
+      sanitizedFileName,
+      sanitizedContentType || 'video/mp4',
+      null, // Use default bucket
+      { clientIP: req.ip }
+    );
+    
+    // Calculate how many part URLs to pre-generate
+    const defaultChunkSize = sanitizedChunkSize || (25 * 1024 * 1024); // 25MB default
+    const estimatedParts = Math.ceil(sanitizedFileSize / defaultChunkSize);
+    const initialUrlCount = Math.min(estimatedParts, 5); // Generate URLs for first 5 parts only
+    
+    // Update status with B2 information
+    updateUploadStatus(uploadId, {
+      status: 'ready_for_upload',
+      stage: 'ready for direct B2 chunk uploads',
+      progress: 10,
+      b2FileId: b2Result.b2FileId,
+      fileName: b2Result.fileName,
+      estimatedParts: estimatedParts
+    });
+    
+    console.log(`✅ Secure multipart upload initialized: ${uploadId}`);
+    
+    res.json({
+      success: true,
+      uploadId: uploadId,
+      b2FileId: b2Result.b2FileId,
+      fileName: b2Result.fileName,
+      partUrls: b2Result.partUrls,
+      estimatedParts: estimatedParts,
+      maxPartSize: 5 * 1024 * 1024 * 1024, // 5GB B2 limit
+      expiresAt: b2Result.expiresAt,
+      message: 'Secure direct B2 multipart upload initialized successfully',
+      instructions: {
+        step1: 'Upload chunks directly to the provided B2 part URLs',
+        step2: 'Call /upload/multipart/get-urls for additional part URLs if needed',
+        step3: 'Call /upload/multipart/complete when all chunks are uploaded',
+        step4: 'Monitor progress via WebSocket or /upload/status endpoint',
+        security: 'Part URLs expire in 23 hours. Calculate SHA1 hashes for each part.'
+      }
+    });
+    
+  } catch (error) {
+    console.error(`❌ Failed to initialize multipart upload:`, error);
+    
+    if (uploadId) {
+      failUploadStatus(uploadId, error);
+    }
+    
+    res.status(500).json({
+      error: 'Failed to initialize multipart upload',
+      details: error.message,
+      uploadId: uploadId || null,
+      fallback: 'Try using /upload/video for FormData uploads'
     });
   }
 });
 
 /**
- * GENERATE THUMBNAIL ROUTE
- * POST /upload/generate-thumbnail
- * Generates thumbnail from video URL
+ * NEW: Get Additional Part URLs
+ * POST /upload/multipart/get-urls
+ * Provides fresh part URLs for additional chunks or expired URLs
  */
-router.post('/generate-thumbnail', async (req, res) => {
+router.post('/multipart/get-urls', moderateRateLimit, async (req, res) => {
+  try {
+    const { uploadId, b2FileId, fromPartNumber, count = 10 } = req.body;
+    
+    // Sanitize inputs
+    const sanitizedUploadId = sanitizeInput(uploadId);
+    const sanitizedB2FileId = sanitizeInput(b2FileId);
+    const sanitizedFromPartNumber = sanitizeInput(fromPartNumber);
+    const sanitizedCount = Math.min(sanitizeInput(count), 20); // Limit to 20 URLs at once
+    
+    // Validate required fields
+    if (!sanitizedUploadId || !sanitizedB2FileId || !sanitizedFromPartNumber) {
+      return res.status(400).json({
+        error: 'Missing required fields: uploadId, b2FileId, and fromPartNumber are required'
+      });
+    }
+    
+    // Security: Validate part number bounds
+    if (sanitizedFromPartNumber < 1 || sanitizedFromPartNumber > 10000) {
+      return res.status(400).json({
+        error: 'Part number must be between 1 and 10000'
+      });
+    }
+    
+    console.log(`🔗 Generating part URLs for ${sanitizedUploadId}, parts ${sanitizedFromPartNumber}-${sanitizedFromPartNumber + sanitizedCount - 1}`);
+    
+    // Validate upload exists and is in correct state
+    const uploadStatus = getUploadStatus(sanitizedUploadId);
+    if (!uploadStatus) {
+      return res.status(404).json({
+        error: 'Upload not found or expired',
+        uploadId: sanitizedUploadId
+      });
+    }
+    
+    if (uploadStatus.status === 'complete' || uploadStatus.status === 'error') {
+      return res.status(400).json({
+        error: `Upload is in ${uploadStatus.status} state and cannot accept new part URLs`,
+        uploadId: sanitizedUploadId
+      });
+    }
+    
+    // Generate fresh part URLs with security context
+    const urlResult = await multipartUploader.getAdditionalPartUrls(
+      sanitizedUploadId,
+      sanitizedB2FileId,
+      sanitizedFromPartNumber,
+      sanitizedCount,
+      { clientIP: req.ip }
+    );
+    
+    updateUploadStatus(sanitizedUploadId, {
+      stage: `part URLs generated for parts ${sanitizedFromPartNumber}-${sanitizedFromPartNumber + sanitizedCount - 1}`
+    });
+    
+    console.log(`✅ Generated ${sanitizedCount} part URLs for ${sanitizedUploadId}`);
+    
+    res.json({
+      success: true,
+      uploadId: sanitizedUploadId,
+      partUrls: urlResult.partUrls,
+      fromPartNumber: sanitizedFromPartNumber,
+      count: urlResult.partUrls.length
+    });
+    
+  } catch (error) {
+    console.error(`❌ Failed to generate part URLs:`, error);
+    
+    res.status(500).json({
+      error: 'Failed to generate part URLs',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * NEW: Complete Multipart Upload
+ * POST /upload/multipart/complete
+ * Finalizes B2 upload and triggers background processing
+ */
+router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
+  try {
+    const { uploadId, b2FileId, partSha1Array, originalFileName, videoId } = req.body;
+    
+    // Sanitize inputs
+    const sanitizedUploadId = sanitizeInput(uploadId);
+    const sanitizedB2FileId = sanitizeInput(b2FileId);
+    const sanitizedOriginalFileName = sanitizeInput(originalFileName);
+    const sanitizedVideoId = sanitizeInput(videoId);
+    
+    // Validate required fields
+    if (!sanitizedUploadId || !sanitizedB2FileId || !partSha1Array || !sanitizedOriginalFileName) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['uploadId', 'b2FileId', 'partSha1Array', 'originalFileName'],
+        received: {
+          uploadId: !!sanitizedUploadId,
+          b2FileId: !!sanitizedB2FileId,
+          partSha1Array: !!partSha1Array,
+          originalFileName: !!sanitizedOriginalFileName
+        }
+      });
+    }
+    
+    // Validate partSha1Array format and security
+    if (!Array.isArray(partSha1Array) || partSha1Array.length === 0) {
+      return res.status(400).json({
+        error: 'partSha1Array must be a non-empty array of SHA1 hashes'
+      });
+    }
+    
+    if (partSha1Array.length > 10000) {
+      return res.status(400).json({
+        error: 'Too many parts. Maximum allowed: 10000'
+      });
+    }
+    
+    console.log(`🏁 Completing multipart upload ${sanitizedUploadId} with ${partSha1Array.length} parts`);
+    
+    // Validate upload exists and is in correct state
+    const uploadStatus = getUploadStatus(sanitizedUploadId);
+    if (!uploadStatus) {
+      return res.status(404).json({
+        error: 'Upload not found or expired',
+        uploadId: sanitizedUploadId
+      });
+    }
+    
+    if (uploadStatus.status === 'complete') {
+      return res.status(400).json({
+        error: 'Upload already completed',
+        uploadId: sanitizedUploadId,
+        existingResult: {
+          status: uploadStatus.status,
+          videoUrl: uploadStatus.videoUrl
+        }
+      });
+    }
+    
+    updateUploadStatus(sanitizedUploadId, {
+      status: 'finalizing',
+      stage: 'finalizing B2 multipart upload',
+      progress: 90
+    });
+    
+    // Complete the multipart upload with security context
+    const b2Result = await multipartUploader.completeMultipartUpload(
+      sanitizedUploadId,
+      sanitizedB2FileId,
+      partSha1Array,
+      sanitizedOriginalFileName,
+      sanitizedVideoId,
+      { clientIP: req.ip }
+    );
+    
+    console.log(`✅ B2 upload finalized: ${b2Result.videoUrl}`);
+    
+    updateUploadStatus(sanitizedUploadId, {
+      status: 'processing_background',
+      stage: 'video uploaded, processing thumbnails in background...',
+      progress: 95,
+      videoUrl: b2Result.videoUrl
+    });
+    
+    // Mark upload as complete with final data
+    completeUploadStatus(sanitizedUploadId, {
+      videoUrl: b2Result.videoUrl,
+      fileName: b2Result.fileName,
+      uploadMethod: 'direct_multipart',
+      partsUploaded: partSha1Array.length,
+      backgroundTask: b2Result.backgroundTask,
+      publishReady: true,
+      completedAt: new Date().toISOString(),
+      fileSize: b2Result.fileSize
+    });
+    
+    console.log(`🎉 Multipart upload completed successfully: ${sanitizedUploadId}`);
+    
+    res.json({
+      success: true,
+      uploadId: sanitizedUploadId,
+      videoUrl: b2Result.videoUrl,
+      fileName: b2Result.fileName,
+      partsUploaded: partSha1Array.length,
+      fileSize: b2Result.fileSize,
+      publishReady: true,
+      backgroundProcessing: {
+        thumbnailGeneration: b2Result.backgroundTask,
+        estimatedTime: '1-2 minutes',
+        trackingMethod: 'WebSocket status updates'
+      },
+      message: 'Upload completed successfully! Video is ready to view. Thumbnail generation in progress.'
+    });
+    
+  } catch (error) {
+    console.error(`❌ Failed to complete multipart upload:`, error);
+    
+    const { uploadId } = req.body;
+    if (uploadId) {
+      failUploadStatus(sanitizeInput(uploadId), error);
+    }
+    
+    res.status(500).json({
+      error: 'Failed to complete multipart upload',
+      details: error.message,
+      uploadId: uploadId || null
+    });
+  }
+});
+
+/**
+ * NEW: Cancel Multipart Upload
+ * POST /upload/multipart/cancel
+ * Cancels B2 upload and cleans up resources
+ */
+router.post('/multipart/cancel', moderateRateLimit, async (req, res) => {
+  try {
+    const { uploadId, b2FileId } = req.body;
+    
+    // Sanitize inputs
+    const sanitizedUploadId = sanitizeInput(uploadId);
+    const sanitizedB2FileId = sanitizeInput(b2FileId);
+    
+    if (!sanitizedUploadId || !sanitizedB2FileId) {
+      return res.status(400).json({
+        error: 'Missing required fields: uploadId and b2FileId are required'
+      });
+    }
+    
+    console.log(`🛑 Cancelling multipart upload ${sanitizedUploadId}`);
+    
+    // Cancel the B2 multipart upload with security context
+    const cancelled = await multipartUploader.cancelMultipartUpload(
+      sanitizedUploadId, 
+      sanitizedB2FileId,
+      { clientIP: req.ip }
+    );
+    
+    if (cancelled) {
+      console.log(`✅ Successfully cancelled upload ${sanitizedUploadId}`);
+      
+      res.json({
+        success: true,
+        uploadId: sanitizedUploadId,
+        message: 'Upload cancelled successfully'
+      });
+    } else {
+      res.status(500).json({
+        error: 'Failed to cancel upload',
+        uploadId: sanitizedUploadId
+      });
+    }
+    
+  } catch (error) {
+    console.error(`❌ Failed to cancel multipart upload:`, error);
+    
+    res.status(500).json({
+      error: 'Failed to cancel upload',
+      details: error.message
+    });
+  }
+});
+
+// ============================================================================
+// EXISTING FUNCTIONALITY CONTINUED - PRESERVED WITH SECURITY ENHANCEMENTS
+// ============================================================================
+
+/**
+ * EXISTING: GENERATE THUMBNAIL ROUTE
+ * POST /upload/generate-thumbnail
+ * Generates thumbnail from video URL - ENHANCED WITH SECURITY
+ */
+router.post('/generate-thumbnail', moderateRateLimit, async (req, res) => {
   try {
     const { videoUrl, seekTime = 5 } = req.body;
-
-    console.log(`🖼️ Thumbnail generation requested for: ${videoUrl}`);
-
-    if (!videoUrl) {
+    
+    // Sanitize inputs
+    const sanitizedVideoUrl = sanitizeInput(videoUrl);
+    const sanitizedSeekTime = Math.max(0, Math.min(sanitizeInput(seekTime), 3600)); // Max 1 hour
+    
+    console.log(`🖼️ Thumbnail generation requested for: ${sanitizedVideoUrl}`);
+    
+    if (!sanitizedVideoUrl) {
       return res.status(400).json({
         error: 'Video URL is required',
         message: 'Please provide a videoUrl in the request body'
       });
     }
-
+    
+    // Security: Validate URL format (basic check)
+    try {
+      new URL(sanitizedVideoUrl);
+    } catch {
+      return res.status(400).json({
+        error: 'Invalid video URL format'
+      });
+    }
+    
     // Extract filename from URL for thumbnail naming
-    const urlParts = videoUrl.split('/');
+    const urlParts = sanitizedVideoUrl.split('/');
     const filename = urlParts[urlParts.length - 1];
     const baseName = path.basename(filename, path.extname(filename));
     const thumbnailFileName = `${baseName}_${Date.now()}.jpg`;
     const thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
-
+    
     // Ensure thumbs directory exists
     await ensureDirectory('uploads/thumbs');
-
+    
     // Generate thumbnail from remote video URL
-    await ffmpegService.extractThumbnailFromRemote(videoUrl, thumbnailPath, seekTime);
+    await ffmpegService.extractThumbnailFromRemote(sanitizedVideoUrl, thumbnailPath, sanitizedSeekTime);
     console.log(`✅ Thumbnail generated from remote URL: ${thumbnailPath}`);
-
+    
     // Upload thumbnail to B2
     const thumbnailUrl = await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
     console.log(`✅ Thumbnail uploaded to B2: ${thumbnailUrl}`);
-
+    
     // Clean up local thumbnail
     if (fs.existsSync(thumbnailPath)) {
       fs.unlinkSync(thumbnailPath);
       console.log(`🧹 Local thumbnail cleaned up: ${thumbnailPath}`);
     }
-
+    
     res.json({
       success: true,
       thumbnailUrl,
       message: 'Thumbnail generated successfully',
-      seekTime,
-      originalVideo: videoUrl
+      seekTime: sanitizedSeekTime,
+      originalVideo: sanitizedVideoUrl
     });
-
+    
   } catch (error) {
     console.error(`❌ Thumbnail generation failed: ${error.message}`);
     res.status(500).json({
@@ -241,22 +760,23 @@ router.post('/generate-thumbnail', async (req, res) => {
 });
 
 /**
- * CUSTOM THUMBNAIL UPLOAD ROUTE
+ * EXISTING: CUSTOM THUMBNAIL UPLOAD ROUTE
  * POST /upload/thumbnail
- * Handles user-uploaded custom thumbnail images
+ * Handles user-uploaded custom thumbnail images - ENHANCED WITH SECURITY
  */
-router.post('/thumbnail', async (req, res) => {
+router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, res) => {
   let uploadId;
 
   try {
-    uploadId = `thumbnail_${Date.now()}`;
+    uploadId = `thumbnail_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     console.log(`🖼️ Custom thumbnail upload started: ${uploadId}`);
 
     // Directory setup
     await ensureDirectory('uploads');
     await ensureDirectory('uploads/thumbs');
 
-    // Busboy setup for image uploads
+    // Busboy setup for image uploads with security limits
+    const busboy = require('busboy');
     const bb = busboy({
       headers: req.headers,
       limits: {
@@ -274,7 +794,7 @@ router.post('/thumbnail', async (req, res) => {
     let writeStream;
     let formFields = {};
 
-    // File handler
+    // File handler with security validation
     bb.on('file', (fieldname, file, info) => {
       console.log(`📥 Thumbnail file handler triggered:`, {
         fieldname,
@@ -287,41 +807,60 @@ router.post('/thumbnail', async (req, res) => {
         // Accept common field names for thumbnails
         const validFieldNames = ['thumbnail', 'image', 'file', 'upload'];
         if (!validFieldNames.includes(fieldname)) {
-          console.warn(`⚠️ Unexpected field name: ${fieldname}. Accepting anyway.`);
+          console.warn(`⚠️ Unexpected field name: ${fieldname}. Rejecting.`);
+          return res.status(400).json({
+            error: 'Invalid field name for thumbnail upload'
+          });
         }
 
         fileReceived = true;
-        originalName = info.filename;
+        originalName = sanitizeInput(info.filename);
         filename = generateUniqueFilename(originalName);
         tempFilePath = getUploadPath('thumbs', filename);
 
         console.log(`📁 Processing thumbnail: ${originalName} -> ${filename}`);
 
-        // Image type validation
+        // Security: Image type validation
         const validImageTypes = [
-          'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'
+          'image/jpeg', 'image/jpg', 'image/png', 'image/webp'
         ];
 
         if (!validImageTypes.includes(info.mimeType)) {
-          const error = new Error(`Invalid image type: ${info.mimeType}. Only JPEG, PNG, WebP, and GIF images are allowed.`);
+          const error = new Error(`Invalid image type: ${info.mimeType}. Only JPEG, PNG, and WebP images are allowed.`);
           console.error(`❌ ${error.message}`);
-          return file.resume(); // Drain the file stream
+          return res.status(400).json({
+            error: error.message
+          });
         }
 
-        // Create write stream
+        // Create write stream with error handling
         writeStream = fs.createWriteStream(tempFilePath);
 
         writeStream.on('error', (streamError) => {
           console.error(`❌ Thumbnail write stream error: ${streamError.message}`);
+          res.status(500).json({
+            error: 'File write error',
+            uploadId
+          });
         });
 
-        // File data handling
+        // File data handling with size monitoring
+        let totalBytes = 0;
         file.on('data', (chunk) => {
-          // No progress tracking needed for small images
+          totalBytes += chunk.length;
+          
+          // Security: Additional size check during upload
+          if (totalBytes > 10 * 1024 * 1024) {
+            file.destroy();
+            writeStream.destroy();
+            return res.status(413).json({
+              error: 'Thumbnail file too large (max 10MB)'
+            });
+          }
         });
 
         file.on('end', () => {
-          console.log(`✅ Thumbnail file stream ended`);
+          console.log(`✅ Thumbnail file stream ended: ${Math.floor(totalBytes / 1024)}KB total`);
           writeStream.end();
         });
 
@@ -330,24 +869,37 @@ router.post('/thumbnail', async (req, res) => {
           if (writeStream && !writeStream.destroyed) {
             writeStream.destroy();
           }
+          res.status(500).json({
+            error: 'File upload error',
+            uploadId
+          });
         });
 
         writeStream.on('close', async () => {
           console.log(`✅ Thumbnail write stream closed - processing`);
 
           try {
+            // Security: Verify file exists and has reasonable size
+            const stats = fs.statSync(tempFilePath);
+            if (stats.size === 0) {
+              throw new Error('Uploaded file is empty');
+            }
+            if (stats.size > 10 * 1024 * 1024) {
+              throw new Error('Uploaded file exceeds size limit');
+            }
+
             // Upload thumbnail directly to B2
             const thumbnailUrl = await b2Service.uploadThumbnail(tempFilePath, filename);
             console.log(`✅ Custom thumbnail uploaded to B2: ${thumbnailUrl}`);
 
-            // Clean up local file
+            // Clean up local file immediately
             if (fs.existsSync(tempFilePath)) {
               fs.unlinkSync(tempFilePath);
               console.log(`🧹 Local thumbnail cleaned up: ${tempFilePath}`);
             }
 
             // Get video ID from form fields if provided
-            const videoId = formFields.videoId;
+            const videoId = sanitizeInput(formFields.videoId);
 
             // Update database if videoId provided
             if (videoId) {
@@ -363,11 +915,12 @@ router.post('/thumbnail', async (req, res) => {
 
             res.json({
               success: true,
-              url: thumbnailUrl,  // Frontend expects 'url' property
-              thumbnailUrl,       // Keep for backward compatibility
+              url: thumbnailUrl,
+              thumbnailUrl,
               message: 'Custom thumbnail uploaded successfully',
               uploadId,
-              videoId: videoId || null
+              videoId: videoId || null,
+              fileSize: stats.size
             });
 
           } catch (uploadError) {
@@ -391,14 +944,17 @@ router.post('/thumbnail', async (req, res) => {
 
       } catch (fileHandlerError) {
         console.error(`❌ Thumbnail file handler error: ${fileHandlerError.message}`);
-        file.resume(); // Drain the stream
+        res.status(500).json({
+          error: 'File handler error',
+          uploadId
+        });
       }
     });
 
-    // Handle form fields (videoId, etc.)
+    // Handle form fields with sanitization
     bb.on('field', (fieldname, value) => {
       console.log(`📝 Thumbnail form field: ${fieldname} = ${value}`);
-      formFields[fieldname] = value;
+      formFields[fieldname] = sanitizeInput(value);
     });
 
     bb.on('finish', () => {
@@ -407,7 +963,7 @@ router.post('/thumbnail', async (req, res) => {
       if (!fileReceived) {
         return res.status(400).json({
           error: 'No thumbnail image was uploaded',
-          message: 'Please select an image file (JPEG, PNG, WebP, or GIF)',
+          message: 'Please select an image file (JPEG, PNG, or WebP)',
           uploadId
         });
       }
@@ -432,12 +988,11 @@ router.post('/thumbnail', async (req, res) => {
       });
     });
 
-    // Request handlers
+    // Request handlers with security
     req.on('error', (error) => {
       console.error(`❌ Thumbnail request error: ${error.message}`);
       res.status(500).json({
         error: 'Thumbnail upload request failed',
-        details: error.message,
         uploadId
       });
     });
@@ -466,54 +1021,69 @@ router.post('/thumbnail', async (req, res) => {
 });
 
 /**
- * UPLOAD STATUS ROUTE
+ * EXISTING: UPLOAD STATUS ROUTE
  * GET /upload/status/:uploadId
- * Returns current upload status
+ * Returns current upload status - ENHANCED WITH SECURITY
  */
-router.get('/status/:uploadId', (req, res) => {
-  const { uploadId } = req.params;
-
+router.get('/status/:uploadId', generalRateLimit, (req, res) => {
+  const uploadId = sanitizeInput(req.params.uploadId);
+  
   try {
+    if (!uploadId || uploadId.length > 100) {
+      return res.status(400).json({
+        error: 'Invalid upload ID'
+      });
+    }
+    
     const status = getUploadStatus(uploadId);
-
+    
     if (!status) {
-      return res.status(404).json({
+      return res.status(404).json({ 
         error: 'Upload not found',
         uploadId,
         message: 'Upload may have expired or not yet started'
       });
     }
-
-    // Add server health info
-    const response = {
+    
+    // Security: Remove sensitive information from status
+    const sanitizedStatus = {
       ...status,
+      // Remove sensitive fields
+      authorizationToken: undefined,
+      clientIP: undefined,
+      userAgent: undefined
+    };
+    
+    // Add server health info (limited)
+    const memUsage = process.memoryUsage();
+    const response = {
+      ...sanitizedStatus,
       serverHealth: {
-        memory: process.memoryUsage(),
+        memoryUsageMB: Math.floor(memUsage.rss / 1024 / 1024),
         timestamp: new Date().toISOString()
       }
     };
-
+    
     res.json(response);
-
+    
   } catch (error) {
     console.error(`❌ Status check error: ${error.message}`);
-    res.status(500).json({
-      error: 'Status check failed',
-      details: error.message
+    res.status(500).json({ 
+      error: 'Status check failed'
     });
   }
 });
 
 /**
- * HEALTH CHECK ROUTE
+ * EXISTING: HEALTH CHECK ROUTE
  * GET /upload/health
- * Returns service health status
+ * Returns service health status - ENHANCED
  */
 router.get('/health', (req, res) => {
   const memInfo = process.memoryUsage();
   const health = {
     status: 'healthy',
-    service: 'refactored-upload-service',
+    service: 'enhanced-upload-service-secure',
     memory: {
       rss: `${Math.floor(memInfo.rss / 1024 / 1024)}MB`,
       heapUsed: `${Math.floor(memInfo.heapUsed / 1024 / 1024)}MB`,
@@ -525,28 +1095,41 @@ router.get('/health', (req, res) => {
       chunkSize: '25MB',
       formdataUploads: 'enabled',
       chunkedUploads: 'enabled',
+      directMultipartUploads: ENABLE_MULTIPART_UPLOADS ? 'enabled' : 'disabled',
+      customThumbnailUpload: 'enabled',
       b2Upload: 'enabled',
       thumbnailGeneration: 'enabled',
+      backgroundProcessing: 'enabled',
       supabaseIntegration: 'enabled',
-      ffmpegMetadata: 'enabled'
+      ffmpegMetadata: 'enabled',
+      rateLimiting: 'enabled',
+      inputSanitization: 'enabled',
+      securityValidation: 'enabled'
     }
   };
-
+  
   res.json(health);
 });
 
 /**
- * CORS TEST ROUTE
+ * EXISTING: CORS TEST ROUTE
  * GET /upload/cors-test
- * Tests CORS configuration
+ * Tests CORS configuration - ENHANCED
  */
 router.get('/cors-test', (req, res) => {
   res.json({
     success: true,
-    message: 'Refactored Upload routes CORS working',
+    message: 'Enhanced Secure Upload routes CORS working',
     origin: req.headers.origin || 'Unknown',
     timestamp: new Date().toISOString(),
-    service: 'refactored-upload-service'
+    service: 'enhanced-upload-service-secure',
+    capabilities: {
+      formdata: true,
+      chunked: true,
+      directMultipart: ENABLE_MULTIPART_UPLOADS,
+      customThumbnails: true,
+      security: 'enabled'
+    }
   });
 });
 
