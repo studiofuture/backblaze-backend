@@ -221,8 +221,8 @@ function validateEnvironment() {
   const missing = requiredEnvVars.filter(varName => !process.env[varName]);
   
   // Validate B2 credentials format (basic check)
-  if (process.env.B2_ACCOUNT_ID && !/^[a-fA-F0-9]{24}$/.test(process.env.B2_ACCOUNT_ID)) {
-    logger.warn('⚠️ B2_ACCOUNT_ID format appears invalid (should be 24 hex characters)');
+  if (process.env.B2_ACCOUNT_ID && !/^[a-fA-F0-9]{12}$/.test(process.env.B2_ACCOUNT_ID)) {
+    logger.warn('⚠️ B2_ACCOUNT_ID format appears invalid (should be 12 hex characters)');
   }
   
   if (process.env.B2_APPLICATION_KEY && process.env.B2_APPLICATION_KEY.length < 20) {
