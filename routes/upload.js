@@ -3,10 +3,10 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const busboy = require('busboy');
-const { 
-  initUploadStatus, 
-  updateUploadStatus, 
-  completeUploadStatus, 
+const {
+  initUploadStatus,
+  updateUploadStatus,
+  completeUploadStatus,
   failUploadStatus,
   getUploadStatus
 } = require('../utils/status');
@@ -30,31 +30,31 @@ console.log('🔧 DEBUG: NODE_ENV =', process.env.NODE_ENV);
  */
 router.post('/video', async (req, res) => {
   let uploadId;
-  
+
   try {
     uploadId = `upload_${Date.now()}`;
     console.log(`🚀 FormData upload started: ${uploadId}`);
-    
+
     // Process upload using FormData handler service
     const result = await formdataHandler.handleFormDataUpload(req, uploadId);
-    
+
     console.log(`✅ FormData upload completed: ${uploadId}`);
     res.json({
       status: "success",
       uploadId,
       message: "Upload completed successfully",
-      url: result.videoUrl, 
+      url: result.videoUrl,
       ...result
     });
-    
+
   } catch (error) {
     console.error(`❌ FormData upload failed: ${error.message}`);
-    
+
     if (uploadId) {
       failUploadStatus(uploadId, error);
     }
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       error: error.message,
       uploadId: uploadId || 'unknown'
     });
@@ -71,26 +71,26 @@ router.post('/chunk', async (req, res) => {
     const uploadId = req.headers['x-upload-id'];
     const chunkIndex = parseInt(req.headers['x-chunk-index']);
     const totalChunks = parseInt(req.headers['x-total-chunks']);
-    
+
     console.log(`📦 Receiving chunk ${chunkIndex}/${totalChunks} for upload ${uploadId}`);
-    
+
     // Validate headers
     if (!uploadId || chunkIndex === undefined || !totalChunks) {
       return res.status(400).json({
         error: 'Missing required headers: x-upload-id, x-chunk-index, x-total-chunks'
       });
     }
-    
+
     // Process chunk using chunk assembler service
     await chunkAssembler.saveChunk(req, uploadId, chunkIndex, totalChunks);
-    
+
     console.log(`✅ Chunk ${chunkIndex} saved successfully`);
     res.json({
       success: true,
       chunkIndex,
       message: `Chunk ${chunkIndex} received successfully`
     });
-    
+
   } catch (error) {
     console.error(`❌ Chunk upload error:`, error);
     res.status(500).json({
@@ -102,25 +102,25 @@ router.post('/chunk', async (req, res) => {
 
 router.post('/complete-chunks', async (req, res) => {
   let uploadId; // Declare here so it's available in catch block
-  
+
   try {
     // ADD DEBUGGING HERE:
     console.log('📋 Complete chunks request body:', req.body);
     console.log('📋 Content-Type:', req.headers['content-type']);
     console.log('📋 Request headers:', Object.keys(req.headers));
-    
+
     const { uploadId: reqUploadId, totalChunks, originalFilename, videoId } = req.body;
     uploadId = reqUploadId; // Assign to outer scope
-    
+
     console.log('📋 Extracted fields:', {
       uploadId,
       totalChunks,
       originalFilename,
       videoId
     });
-    
+
     console.log(`🔄 Starting chunk assembly for upload ${uploadId}`);
-    
+
     // Validate request body
     if (!uploadId || !totalChunks || !originalFilename) {
       console.error('❌ Missing required fields:', {
@@ -128,7 +128,7 @@ router.post('/complete-chunks', async (req, res) => {
         totalChunks: !!totalChunks,
         originalFilename: !!originalFilename
       });
-      
+
       return res.status(400).json({
         error: 'Missing required fields: uploadId, totalChunks, originalFilename',
         received: { uploadId, totalChunks, originalFilename },
@@ -140,21 +140,21 @@ router.post('/complete-chunks', async (req, res) => {
         }
       });
     }
-    
+
     // Initialize processing status
     initUploadStatus(uploadId, {
       status: 'assembling',
       stage: 'assembling chunks into final file',
       progress: 55
     });
-    
+
     // Assemble chunks using chunk assembler service
     const finalFilePath = await chunkAssembler.assembleChunks(uploadId, totalChunks, originalFilename);
     console.log(`✅ Chunks assembled into: ${finalFilePath}`);
-    
+
     // Process the assembled file using upload processor service
     const result = await uploadProcessor.processVideo(uploadId, finalFilePath, originalFilename, videoId);
-    
+
     console.log(`✅ Chunked upload processing completed: ${uploadId}`);
     res.json({
       status: "success",
@@ -163,15 +163,15 @@ router.post('/complete-chunks', async (req, res) => {
       url: result.videoUrl,
       ...result
     });
-    
+
   } catch (error) {
     console.error(`❌ Complete chunks processing failed:`, error);
     console.error(`❌ Error stack:`, error.stack);
-    
+
     if (uploadId) {
       failUploadStatus(uploadId, error);
     }
-    
+
     res.status(500).json({
       error: error.message,
       uploadId: uploadId || 'unknown',
@@ -188,40 +188,40 @@ router.post('/complete-chunks', async (req, res) => {
 router.post('/generate-thumbnail', async (req, res) => {
   try {
     const { videoUrl, seekTime = 5 } = req.body;
-    
+
     console.log(`🖼️ Thumbnail generation requested for: ${videoUrl}`);
-    
+
     if (!videoUrl) {
       return res.status(400).json({
         error: 'Video URL is required',
         message: 'Please provide a videoUrl in the request body'
       });
     }
-    
+
     // Extract filename from URL for thumbnail naming
     const urlParts = videoUrl.split('/');
     const filename = urlParts[urlParts.length - 1];
     const baseName = path.basename(filename, path.extname(filename));
     const thumbnailFileName = `${baseName}_${Date.now()}.jpg`;
     const thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
-    
+
     // Ensure thumbs directory exists
     await ensureDirectory('uploads/thumbs');
-    
+
     // Generate thumbnail from remote video URL
     await ffmpegService.extractThumbnailFromRemote(videoUrl, thumbnailPath, seekTime);
     console.log(`✅ Thumbnail generated from remote URL: ${thumbnailPath}`);
-    
+
     // Upload thumbnail to B2
     const thumbnailUrl = await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
     console.log(`✅ Thumbnail uploaded to B2: ${thumbnailUrl}`);
-    
+
     // Clean up local thumbnail
     if (fs.existsSync(thumbnailPath)) {
       fs.unlinkSync(thumbnailPath);
       console.log(`🧹 Local thumbnail cleaned up: ${thumbnailPath}`);
     }
-    
+
     res.json({
       success: true,
       thumbnailUrl,
@@ -229,7 +229,7 @@ router.post('/generate-thumbnail', async (req, res) => {
       seekTime,
       originalVideo: videoUrl
     });
-    
+
   } catch (error) {
     console.error(`❌ Thumbnail generation failed: ${error.message}`);
     res.status(500).json({
@@ -247,17 +247,17 @@ router.post('/generate-thumbnail', async (req, res) => {
  */
 router.post('/thumbnail', async (req, res) => {
   let uploadId;
-  
+
   try {
     uploadId = `thumbnail_${Date.now()}`;
     console.log(`🖼️ Custom thumbnail upload started: ${uploadId}`);
-    
+
     // Directory setup
     await ensureDirectory('uploads');
     await ensureDirectory('uploads/thumbs');
-    
+
     // Busboy setup for image uploads
-    const bb = busboy({ 
+    const bb = busboy({
       headers: req.headers,
       limits: {
         fileSize: 10 * 1024 * 1024, // 10MB max for images
@@ -266,7 +266,7 @@ router.post('/thumbnail', async (req, res) => {
         fieldSize: 1024 * 1024
       }
     });
-    
+
     let fileReceived = false;
     let filename;
     let originalName;
@@ -282,73 +282,73 @@ router.post('/thumbnail', async (req, res) => {
         mimeType: info.mimeType,
         encoding: info.encoding
       });
-      
+
       try {
         // Accept common field names for thumbnails
         const validFieldNames = ['thumbnail', 'image', 'file', 'upload'];
         if (!validFieldNames.includes(fieldname)) {
           console.warn(`⚠️ Unexpected field name: ${fieldname}. Accepting anyway.`);
         }
-        
+
         fileReceived = true;
         originalName = info.filename;
         filename = generateUniqueFilename(originalName);
         tempFilePath = getUploadPath('thumbs', filename);
-        
+
         console.log(`📁 Processing thumbnail: ${originalName} -> ${filename}`);
-        
+
         // Image type validation
         const validImageTypes = [
           'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'
         ];
-        
+
         if (!validImageTypes.includes(info.mimeType)) {
           const error = new Error(`Invalid image type: ${info.mimeType}. Only JPEG, PNG, WebP, and GIF images are allowed.`);
           console.error(`❌ ${error.message}`);
           return file.resume(); // Drain the file stream
         }
-        
+
         // Create write stream
         writeStream = fs.createWriteStream(tempFilePath);
-        
+
         writeStream.on('error', (streamError) => {
           console.error(`❌ Thumbnail write stream error: ${streamError.message}`);
         });
-        
+
         // File data handling
         file.on('data', (chunk) => {
           // No progress tracking needed for small images
         });
-        
+
         file.on('end', () => {
           console.log(`✅ Thumbnail file stream ended`);
           writeStream.end();
         });
-        
+
         file.on('error', (fileError) => {
           console.error(`❌ Thumbnail file stream error: ${fileError.message}`);
           if (writeStream && !writeStream.destroyed) {
             writeStream.destroy();
           }
         });
-        
+
         writeStream.on('close', async () => {
           console.log(`✅ Thumbnail write stream closed - processing`);
-          
+
           try {
             // Upload thumbnail directly to B2
             const thumbnailUrl = await b2Service.uploadThumbnail(tempFilePath, filename);
             console.log(`✅ Custom thumbnail uploaded to B2: ${thumbnailUrl}`);
-            
+
             // Clean up local file
             if (fs.existsSync(tempFilePath)) {
               fs.unlinkSync(tempFilePath);
               console.log(`🧹 Local thumbnail cleaned up: ${tempFilePath}`);
             }
-            
+
             // Get video ID from form fields if provided
             const videoId = formFields.videoId;
-            
+
             // Update database if videoId provided
             if (videoId) {
               try {
@@ -360,23 +360,24 @@ router.post('/thumbnail', async (req, res) => {
                 // Continue anyway - upload was successful
               }
             }
-            
+
             res.json({
               success: true,
-              thumbnailUrl,
+              url: thumbnailUrl,  // Frontend expects 'url' property
+              thumbnailUrl,       // Keep for backward compatibility
               message: 'Custom thumbnail uploaded successfully',
               uploadId,
               videoId: videoId || null
             });
-            
+
           } catch (uploadError) {
             console.error(`❌ Custom thumbnail upload failed: ${uploadError.message}`);
-            
+
             // Clean up temp file on error
             if (fs.existsSync(tempFilePath)) {
               fs.unlinkSync(tempFilePath);
             }
-            
+
             res.status(500).json({
               error: 'Custom thumbnail upload failed',
               details: uploadError.message,
@@ -384,10 +385,10 @@ router.post('/thumbnail', async (req, res) => {
             });
           }
         });
-        
+
         // Pipe file to write stream
         file.pipe(writeStream);
-        
+
       } catch (fileHandlerError) {
         console.error(`❌ Thumbnail file handler error: ${fileHandlerError.message}`);
         file.resume(); // Drain the stream
@@ -402,7 +403,7 @@ router.post('/thumbnail', async (req, res) => {
 
     bb.on('finish', () => {
       console.log(`🏁 Thumbnail busboy finished for ${uploadId}`);
-      
+
       if (!fileReceived) {
         return res.status(400).json({
           error: 'No thumbnail image was uploaded',
@@ -414,7 +415,7 @@ router.post('/thumbnail', async (req, res) => {
 
     bb.on('error', (error) => {
       console.error(`❌ Thumbnail busboy error: ${error.message}`);
-      
+
       // Clean up temp file
       if (tempFilePath && fs.existsSync(tempFilePath)) {
         try {
@@ -423,7 +424,7 @@ router.post('/thumbnail', async (req, res) => {
           console.error(`❌ Thumbnail cleanup error: ${cleanupError.message}`);
         }
       }
-      
+
       res.status(500).json({
         error: 'Thumbnail upload failed',
         details: error.message,
@@ -453,7 +454,7 @@ router.post('/thumbnail', async (req, res) => {
 
     // Pipe request to busboy
     req.pipe(bb);
-    
+
   } catch (error) {
     console.error(`❌ Custom thumbnail upload setup error: ${error.message}`);
     res.status(500).json({
@@ -471,18 +472,18 @@ router.post('/thumbnail', async (req, res) => {
  */
 router.get('/status/:uploadId', (req, res) => {
   const { uploadId } = req.params;
-  
+
   try {
     const status = getUploadStatus(uploadId);
-    
+
     if (!status) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Upload not found',
         uploadId,
         message: 'Upload may have expired or not yet started'
       });
     }
-    
+
     // Add server health info
     const response = {
       ...status,
@@ -491,12 +492,12 @@ router.get('/status/:uploadId', (req, res) => {
         timestamp: new Date().toISOString()
       }
     };
-    
+
     res.json(response);
-    
+
   } catch (error) {
     console.error(`❌ Status check error: ${error.message}`);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Status check failed',
       details: error.message
     });
@@ -530,7 +531,7 @@ router.get('/health', (req, res) => {
       ffmpegMetadata: 'enabled'
     }
   };
-  
+
   res.json(health);
 });
 
