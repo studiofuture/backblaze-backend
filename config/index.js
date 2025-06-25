@@ -212,6 +212,83 @@ const optionalEnvVars = [
 ];
 
 /**
+ * Deep merge function to properly merge nested objects while preserving arrays
+ */
+function deepMerge(target, source) {
+  const result = { ...target };
+  
+  Object.keys(source).forEach(key => {
+    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      // For nested objects, recursively merge
+      result[key] = deepMerge(target[key] || {}, source[key]);
+    } else {
+      // For primitives and arrays, directly assign (but preserve existing arrays)
+      if (Array.isArray(target[key]) && source[key] === undefined) {
+        // Don't overwrite arrays with undefined
+        result[key] = target[key];
+      } else {
+        result[key] = source[key];
+      }
+    }
+  });
+  
+  return result;
+}
+
+/**
+ * Get environment-specific configuration overrides
+ */
+function getEnvironmentOverrides() {
+  const env = process.env.NODE_ENV || 'development';
+  
+  const overrides = {
+    development: {
+      security: {
+        rateLimiting: {
+          enabled: process.env.DISABLE_RATE_LIMITING === 'true' ? false : true
+        },
+        cors: {
+          strictMode: false
+        }
+      },
+      features: {
+        debugRoutes: true,
+        enhancedLogging: true
+      }
+    },
+    
+    production: {
+      security: {
+        rateLimiting: {
+          enabled: true
+        },
+        cors: {
+          strictMode: process.env.CORS_STRICT_MODE !== 'false'
+        }
+      },
+      features: {
+        debugRoutes: false,
+        enhancedLogging: process.env.ENABLE_ENHANCED_LOGGING === 'true'
+      }
+    },
+    
+    test: {
+      security: {
+        rateLimiting: {
+          enabled: false
+        }
+      },
+      upload: {
+        statusRetention: 5 * 60 * 1000, // 5 minutes for tests
+        cleanupInterval: 1 * 60 * 1000   // 1 minute for tests
+      }
+    }
+  };
+  
+  return overrides[env] || {};
+}
+
+/**
  * Validate environment variables with enhanced security checks
  */
 function validateEnvironment() {
@@ -256,7 +333,7 @@ function validateEnvironment() {
     rateLimiting: config.security.rateLimiting.enabled ? '✅ Enabled' : '❌ Disabled',
     corsStrictMode: config.security.cors.strictMode ? '✅ Enabled' : '⚠️ Permissive',
     trustProxy: config.security.trustProxy ? '✅ Enabled' : '❌ Disabled',
-    allowedOrigins: config.security.cors.allowedOrigins.length,
+    allowedOrigins: config.security.cors.allowedOrigins ? config.security.cors.allowedOrigins.length : 0,
     maxFileSize: `${Math.floor(config.upload.maxFileSize / 1024 / 1024 / 1024)}GB`,
     maxConcurrentUploads: config.upload.maxConcurrentChunks
   });
@@ -305,7 +382,7 @@ function validateEnvironment() {
     }
   });
 
-  // Security validation warnings
+  // Security validation warnings with defensive checks
   if (process.env.NODE_ENV === 'production') {
     if (config.security.cors.strictMode === false) {
       logger.warn('⚠️ SECURITY: CORS strict mode is disabled in production');
@@ -317,6 +394,13 @@ function validateEnvironment() {
     
     if (config.features.debugRoutes === true) {
       logger.warn('⚠️ SECURITY: Debug routes are enabled in production');
+    }
+    
+    // FIXED: Add defensive check for allowedOrigins
+    if (!config.security.cors.allowedOrigins || !Array.isArray(config.security.cors.allowedOrigins)) {
+      logger.error('❌ SECURITY: CORS allowedOrigins is not properly configured');
+    } else if (config.security.cors.allowedOrigins.length === 0) {
+      logger.warn('⚠️ SECURITY: No CORS origins configured');
     }
   }
 
@@ -392,12 +476,15 @@ function validateConfig() {
     warnings.push('High retry attempts may cause extended failure delays');
   }
   
-  // Validate security settings
+  // Validate security settings with defensive checks
   if (config.security.rateLimiting.global.max > 10000) {
     warnings.push('Very high global rate limit may not provide adequate protection');
   }
   
-  if (config.security.cors.allowedOrigins.length === 0) {
+  // FIXED: Add defensive check for allowedOrigins
+  if (!config.security.cors.allowedOrigins || !Array.isArray(config.security.cors.allowedOrigins)) {
+    errors.push('CORS allowedOrigins is not properly configured');
+  } else if (config.security.cors.allowedOrigins.length === 0) {
     errors.push('No CORS origins configured');
   }
   
@@ -412,64 +499,12 @@ function validateConfig() {
   return true;
 }
 
-/**
- * Get environment-specific configuration overrides
- */
-function getEnvironmentOverrides() {
-  const env = process.env.NODE_ENV || 'development';
-  
-  const overrides = {
-    development: {
-      security: {
-        rateLimiting: {
-          enabled: process.env.DISABLE_RATE_LIMITING === 'true' ? false : true
-        },
-        cors: {
-          strictMode: false
-        }
-      },
-      features: {
-        debugRoutes: true,
-        enhancedLogging: true
-      }
-    },
-    
-    production: {
-      security: {
-        rateLimiting: {
-          enabled: true
-        },
-        cors: {
-          strictMode: process.env.CORS_STRICT_MODE !== 'false'
-        }
-      },
-      features: {
-        debugRoutes: false,
-        enhancedLogging: process.env.ENABLE_ENHANCED_LOGGING === 'true'
-      }
-    },
-    
-    test: {
-      security: {
-        rateLimiting: {
-          enabled: false
-        }
-      },
-      upload: {
-        statusRetention: 5 * 60 * 1000, // 5 minutes for tests
-        cleanupInterval: 1 * 60 * 1000   // 1 minute for tests
-      }
-    }
-  };
-  
-  return overrides[env] || {};
-}
-
-// Apply environment-specific overrides
+// Apply environment-specific overrides using deep merge
 const envOverrides = getEnvironmentOverrides();
 Object.keys(envOverrides).forEach(key => {
   if (config[key] && typeof config[key] === 'object') {
-    config[key] = { ...config[key], ...envOverrides[key] };
+    // FIXED: Use deep merge instead of shallow merge to preserve arrays
+    config[key] = deepMerge(config[key], envOverrides[key]);
   } else {
     config[key] = envOverrides[key];
   }
