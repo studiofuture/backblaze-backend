@@ -12,13 +12,13 @@ const {
 } = require('../utils/status');
 const { generateUniqueFilename, getUploadPath, ensureDirectory } = require('../utils/directory');
 
-// Import BOTH existing services AND new multipart services (FIXED IMPORT PATHS)
+// Import BOTH existing services AND new streaming multipart services
 const formdataHandler = require('../services/formdata-handler');
 const chunkAssembler = require('../services/chunk-assembler');
 const uploadProcessor = require('../services/upload-processor');
 const b2Service = require('../services/b2');
 const ffmpegService = require('../services/ffmpeg');
-const multipartUploader = require('../services/multipart-uploader'); // FIXED: Correct import path
+const multipartUploader = require('../services/multipart-uploader'); // Now streaming proxy version
 
 // Security: Rate limiting configurations
 const strictRateLimit = rateLimit({
@@ -281,13 +281,13 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
 });
 
 // ============================================================================
-// NEW MULTIPART UPLOAD FUNCTIONALITY - ENHANCED WITH SECURITY
+// NEW STREAMING PROXY MULTIPART UPLOAD FUNCTIONALITY
 // ============================================================================
 
 /**
- * NEW: Initialize Direct B2 Multipart Upload
+ * NEW: Initialize Streaming Proxy B2 Multipart Upload
  * POST /upload/multipart/initialize
- * Sets up direct B2 upload and returns part URLs
+ * Sets up B2 upload but returns server endpoints instead of B2 URLs
  */
 router.post('/multipart/initialize', strictRateLimit, validateUploadInput, async (req, res) => {
   // Check if multipart uploads are enabled
@@ -339,12 +339,12 @@ router.post('/multipart/initialize', strictRateLimit, validateUploadInput, async
     // Generate unique upload ID with more entropy
     uploadId = `multipart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${Math.random().toString(36).substr(2, 9)}`;
     
-    console.log(`🚀 Initializing secure multipart upload: ${uploadId} for ${sanitizedFileName} (${Math.floor(sanitizedFileSize / 1024 / 1024)}MB)`);
+    console.log(`🚀 Initializing streaming proxy multipart upload: ${uploadId} for ${sanitizedFileName} (${Math.floor(sanitizedFileSize / 1024 / 1024)}MB)`);
     
     // Initialize upload status tracking
     initUploadStatus(uploadId, {
       status: 'initializing',
-      uploadMethod: 'direct_multipart',
+      uploadMethod: 'streaming_proxy',
       fileName: sanitizedFileName,
       fileSize: sanitizedFileSize,
       videoId: sanitizedVideoId,
@@ -353,7 +353,7 @@ router.post('/multipart/initialize', strictRateLimit, validateUploadInput, async
       userAgent: req.headers['user-agent']
     });
     
-    // Initialize B2 large file upload with security context
+    // Initialize B2 large file upload with streaming proxy
     const b2Result = await multipartUploader.initializeMultipartUpload(
       uploadId,
       sanitizedFileName,
@@ -362,51 +362,48 @@ router.post('/multipart/initialize', strictRateLimit, validateUploadInput, async
       { clientIP: req.ip }
     );
     
-    // Calculate how many part URLs to pre-generate
+    // Calculate estimated parts
     const defaultChunkSize = sanitizedChunkSize || (25 * 1024 * 1024); // 25MB default
     const estimatedParts = Math.ceil(sanitizedFileSize / defaultChunkSize);
-    const initialUrlCount = Math.min(estimatedParts, 5); // Generate URLs for first 5 parts only
     
     // Update status with B2 information
     updateUploadStatus(uploadId, {
       status: 'ready_for_upload',
-      stage: 'ready for direct B2 chunk uploads',
+      stage: 'ready for streaming proxy chunk uploads',
       progress: 10,
       b2FileId: b2Result.b2FileId,
       fileName: b2Result.fileName,
       estimatedParts: estimatedParts
     });
     
-    console.log(`✅ Secure multipart upload initialized: ${uploadId}`);
+    console.log(`✅ Streaming proxy multipart upload initialized: ${uploadId}`);
     
     res.json({
       success: true,
       uploadId: uploadId,
       b2FileId: b2Result.b2FileId,
       fileName: b2Result.fileName,
-      partUrls: b2Result.partUrls,
       estimatedParts: estimatedParts,
       maxPartSize: 5 * 1024 * 1024 * 1024, // 5GB B2 limit
-      expiresAt: b2Result.expiresAt,
-      message: 'Secure direct B2 multipart upload initialized successfully',
+      message: 'Streaming proxy multipart upload initialized successfully',
       instructions: {
-        step1: 'Upload chunks directly to the provided B2 part URLs',
-        step2: 'Call /upload/multipart/get-urls for additional part URLs if needed',
+        step1: 'Upload chunks to /upload/multipart/stream-chunk',
+        step2: 'Server will stream chunks directly to B2 (no CORS issues)',
         step3: 'Call /upload/multipart/complete when all chunks are uploaded',
         step4: 'Monitor progress via WebSocket or /upload/status endpoint',
-        security: 'Part URLs expire in 23 hours. Calculate SHA1 hashes for each part.'
+        benefits: 'Low server memory usage via streaming proxy'
       }
     });
     
   } catch (error) {
-    console.error(`❌ Failed to initialize multipart upload:`, error);
+    console.error(`❌ Failed to initialize streaming proxy multipart upload:`, error);
     
     if (uploadId) {
       failUploadStatus(uploadId, error);
     }
     
     res.status(500).json({
-      error: 'Failed to initialize multipart upload',
+      error: 'Failed to initialize streaming proxy multipart upload',
       details: error.message,
       uploadId: uploadId || null,
       fallback: 'Try using /upload/video for FormData uploads'
@@ -415,128 +412,121 @@ router.post('/multipart/initialize', strictRateLimit, validateUploadInput, async
 });
 
 /**
- * NEW: Get Additional Part URLs
- * POST /upload/multipart/get-urls
- * Provides fresh part URLs for additional chunks or expired URLs
+ * NEW: Stream Chunk to B2 (Proxy Upload)
+ * POST /upload/multipart/stream-chunk
+ * Receives chunk from browser and streams directly to B2
  */
-router.post('/multipart/get-urls', moderateRateLimit, async (req, res) => {
+router.post('/multipart/stream-chunk', moderateRateLimit, validateUploadInput, async (req, res) => {
   try {
-    const { uploadId, b2FileId, fromPartNumber, count = 10 } = req.body;
+    const uploadId = sanitizeInput(req.headers['x-upload-id']);
+    const b2FileId = sanitizeInput(req.headers['x-b2-file-id']);
+    const partNumber = parseInt(sanitizeInput(req.headers['x-part-number']));
     
-    // Sanitize inputs
-    const sanitizedUploadId = sanitizeInput(uploadId);
-    const sanitizedB2FileId = sanitizeInput(b2FileId);
-    const sanitizedFromPartNumber = sanitizeInput(fromPartNumber);
-    const sanitizedCount = Math.min(sanitizeInput(count), 20); // Limit to 20 URLs at once
-    
-    // Validate required fields
-    if (!sanitizedUploadId || !sanitizedB2FileId || !sanitizedFromPartNumber) {
+    // Validate required headers
+    if (!uploadId || !b2FileId || !partNumber) {
       return res.status(400).json({
-        error: 'Missing required fields: uploadId, b2FileId, and fromPartNumber are required'
+        error: 'Missing required headers: x-upload-id, x-b2-file-id, x-part-number'
       });
     }
     
     // Security: Validate part number bounds
-    if (sanitizedFromPartNumber < 1 || sanitizedFromPartNumber > 10000) {
+    if (partNumber < 1 || partNumber > 10000) {
       return res.status(400).json({
         error: 'Part number must be between 1 and 10000'
       });
     }
     
-    console.log(`🔗 Generating part URLs for ${sanitizedUploadId}, parts ${sanitizedFromPartNumber}-${sanitizedFromPartNumber + sanitizedCount - 1}`);
+    console.log(`📤 Streaming chunk ${partNumber} to B2 for ${uploadId}`);
     
     // Validate upload exists and is in correct state
-    const uploadStatus = getUploadStatus(sanitizedUploadId);
+    const uploadStatus = getUploadStatus(uploadId);
     if (!uploadStatus) {
       return res.status(404).json({
         error: 'Upload not found or expired',
-        uploadId: sanitizedUploadId
+        uploadId: uploadId
       });
     }
     
     if (uploadStatus.status === 'complete' || uploadStatus.status === 'error') {
       return res.status(400).json({
-        error: `Upload is in ${uploadStatus.status} state and cannot accept new part URLs`,
-        uploadId: sanitizedUploadId
+        error: `Upload is in ${uploadStatus.status} state and cannot accept new chunks`,
+        uploadId: uploadId
       });
     }
     
-    // Generate fresh part URLs with security context
-    const urlResult = await multipartUploader.getAdditionalPartUrls(
-      sanitizedUploadId,
-      sanitizedB2FileId,
-      sanitizedFromPartNumber,
-      sanitizedCount,
+    updateUploadStatus(uploadId, {
+      stage: `streaming chunk ${partNumber} to B2`,
+      progress: Math.min(90, 10 + (partNumber * 2))
+    });
+    
+    // Stream the chunk directly to B2 using request body
+    const streamResult = await multipartUploader.streamChunkToB2(
+      uploadId,
+      b2FileId,
+      partNumber,
+      req, // Pass the request stream directly
       { clientIP: req.ip }
     );
     
-    updateUploadStatus(sanitizedUploadId, {
-      stage: `part URLs generated for parts ${sanitizedFromPartNumber}-${sanitizedFromPartNumber + sanitizedCount - 1}`
-    });
-    
-    console.log(`✅ Generated ${sanitizedCount} part URLs for ${sanitizedUploadId}`);
+    console.log(`✅ Successfully streamed chunk ${partNumber} to B2`);
     
     res.json({
       success: true,
-      uploadId: sanitizedUploadId,
-      partUrls: urlResult.partUrls,
-      fromPartNumber: sanitizedFromPartNumber,
-      count: urlResult.partUrls.length
+      uploadId: uploadId,
+      partNumber: partNumber,
+      sha1: streamResult.sha1,
+      size: streamResult.size,
+      message: `Chunk ${partNumber} streamed to B2 successfully`
     });
     
   } catch (error) {
-    console.error(`❌ Failed to generate part URLs:`, error);
+    console.error(`❌ Failed to stream chunk to B2:`, error);
     
     res.status(500).json({
-      error: 'Failed to generate part URLs',
+      error: 'Failed to stream chunk to B2',
       details: error.message
     });
   }
 });
 
 /**
- * NEW: Complete Multipart Upload
+ * NEW: Complete Streaming Proxy Multipart Upload
  * POST /upload/multipart/complete
  * Finalizes B2 upload and triggers background processing
  */
 router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
   try {
-    const { uploadId, b2FileId, partSha1Array, originalFileName, videoId } = req.body;
+    const { uploadId, b2FileId, totalParts, originalFileName, videoId } = req.body;
     
     // Sanitize inputs
     const sanitizedUploadId = sanitizeInput(uploadId);
     const sanitizedB2FileId = sanitizeInput(b2FileId);
+    const sanitizedTotalParts = sanitizeInput(totalParts);
     const sanitizedOriginalFileName = sanitizeInput(originalFileName);
     const sanitizedVideoId = sanitizeInput(videoId);
     
     // Validate required fields
-    if (!sanitizedUploadId || !sanitizedB2FileId || !partSha1Array || !sanitizedOriginalFileName) {
+    if (!sanitizedUploadId || !sanitizedB2FileId || !sanitizedTotalParts || !sanitizedOriginalFileName) {
       return res.status(400).json({
         error: 'Missing required fields',
-        required: ['uploadId', 'b2FileId', 'partSha1Array', 'originalFileName'],
+        required: ['uploadId', 'b2FileId', 'totalParts', 'originalFileName'],
         received: {
           uploadId: !!sanitizedUploadId,
           b2FileId: !!sanitizedB2FileId,
-          partSha1Array: !!partSha1Array,
+          totalParts: !!sanitizedTotalParts,
           originalFileName: !!sanitizedOriginalFileName
         }
       });
     }
     
-    // Validate partSha1Array format and security
-    if (!Array.isArray(partSha1Array) || partSha1Array.length === 0) {
+    // Validate totalParts
+    if (sanitizedTotalParts < 1 || sanitizedTotalParts > 10000) {
       return res.status(400).json({
-        error: 'partSha1Array must be a non-empty array of SHA1 hashes'
+        error: 'Invalid totalParts value. Must be between 1 and 10000.'
       });
     }
     
-    if (partSha1Array.length > 10000) {
-      return res.status(400).json({
-        error: 'Too many parts. Maximum allowed: 10000'
-      });
-    }
-    
-    console.log(`🏁 Completing multipart upload ${sanitizedUploadId} with ${partSha1Array.length} parts`);
+    console.log(`🏁 Completing streaming proxy multipart upload ${sanitizedUploadId} with ${sanitizedTotalParts} parts`);
     
     // Validate upload exists and is in correct state
     const uploadStatus = getUploadStatus(sanitizedUploadId);
@@ -561,14 +551,14 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
     updateUploadStatus(sanitizedUploadId, {
       status: 'finalizing',
       stage: 'finalizing B2 multipart upload',
-      progress: 90
+      progress: 95
     });
     
-    // Complete the multipart upload with security context
+    // Complete the multipart upload
     const b2Result = await multipartUploader.completeMultipartUpload(
       sanitizedUploadId,
       sanitizedB2FileId,
-      partSha1Array,
+      sanitizedTotalParts,
       sanitizedOriginalFileName,
       sanitizedVideoId,
       { clientIP: req.ip }
@@ -579,7 +569,7 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
     updateUploadStatus(sanitizedUploadId, {
       status: 'processing_background',
       stage: 'video uploaded, processing thumbnails in background...',
-      progress: 95,
+      progress: 98,
       videoUrl: b2Result.videoUrl
     });
     
@@ -587,22 +577,22 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
     completeUploadStatus(sanitizedUploadId, {
       videoUrl: b2Result.videoUrl,
       fileName: b2Result.fileName,
-      uploadMethod: 'direct_multipart',
-      partsUploaded: partSha1Array.length,
+      uploadMethod: 'streaming_proxy',
+      partsUploaded: sanitizedTotalParts,
       backgroundTask: b2Result.backgroundTask,
       publishReady: true,
       completedAt: new Date().toISOString(),
       fileSize: b2Result.fileSize
     });
     
-    console.log(`🎉 Multipart upload completed successfully: ${sanitizedUploadId}`);
+    console.log(`🎉 Streaming proxy multipart upload completed successfully: ${sanitizedUploadId}`);
     
     res.json({
       success: true,
       uploadId: sanitizedUploadId,
       videoUrl: b2Result.videoUrl,
       fileName: b2Result.fileName,
-      partsUploaded: partSha1Array.length,
+      partsUploaded: sanitizedTotalParts,
       fileSize: b2Result.fileSize,
       publishReady: true,
       backgroundProcessing: {
@@ -610,11 +600,11 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
         estimatedTime: '1-2 minutes',
         trackingMethod: 'WebSocket status updates'
       },
-      message: 'Upload completed successfully! Video is ready to view. Thumbnail generation in progress.'
+      message: 'Streaming proxy upload completed successfully! Video is ready to view. Thumbnail generation in progress.'
     });
     
   } catch (error) {
-    console.error(`❌ Failed to complete multipart upload:`, error);
+    console.error(`❌ Failed to complete streaming proxy multipart upload:`, error);
     
     const { uploadId } = req.body;
     if (uploadId) {
@@ -622,7 +612,7 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
     }
     
     res.status(500).json({
-      error: 'Failed to complete multipart upload',
+      error: 'Failed to complete streaming proxy multipart upload',
       details: error.message,
       uploadId: uploadId || null
     });
@@ -630,7 +620,7 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
 });
 
 /**
- * NEW: Cancel Multipart Upload
+ * NEW: Cancel Streaming Proxy Multipart Upload
  * POST /upload/multipart/cancel
  * Cancels B2 upload and cleans up resources
  */
@@ -648,9 +638,9 @@ router.post('/multipart/cancel', moderateRateLimit, async (req, res) => {
       });
     }
     
-    console.log(`🛑 Cancelling multipart upload ${sanitizedUploadId}`);
+    console.log(`🛑 Cancelling streaming proxy multipart upload ${sanitizedUploadId}`);
     
-    // Cancel the B2 multipart upload with security context
+    // Cancel the B2 multipart upload
     const cancelled = await multipartUploader.cancelMultipartUpload(
       sanitizedUploadId, 
       sanitizedB2FileId,
@@ -673,7 +663,7 @@ router.post('/multipart/cancel', moderateRateLimit, async (req, res) => {
     }
     
   } catch (error) {
-    console.error(`❌ Failed to cancel multipart upload:`, error);
+    console.error(`❌ Failed to cancel streaming proxy multipart upload:`, error);
     
     res.status(500).json({
       error: 'Failed to cancel upload',
@@ -1083,7 +1073,7 @@ router.get('/health', (req, res) => {
   const memInfo = process.memoryUsage();
   const health = {
     status: 'healthy',
-    service: 'enhanced-upload-service-secure',
+    service: 'enhanced-upload-service-streaming-proxy',
     memory: {
       rss: `${Math.floor(memInfo.rss / 1024 / 1024)}MB`,
       heapUsed: `${Math.floor(memInfo.heapUsed / 1024 / 1024)}MB`,
@@ -1095,7 +1085,7 @@ router.get('/health', (req, res) => {
       chunkSize: '25MB',
       formdataUploads: 'enabled',
       chunkedUploads: 'enabled',
-      directMultipartUploads: ENABLE_MULTIPART_UPLOADS ? 'enabled' : 'disabled',
+      streamingProxyMultipartUploads: ENABLE_MULTIPART_UPLOADS ? 'enabled' : 'disabled',
       customThumbnailUpload: 'enabled',
       b2Upload: 'enabled',
       thumbnailGeneration: 'enabled',
@@ -1104,7 +1094,8 @@ router.get('/health', (req, res) => {
       ffmpegMetadata: 'enabled',
       rateLimiting: 'enabled',
       inputSanitization: 'enabled',
-      securityValidation: 'enabled'
+      securityValidation: 'enabled',
+      streamingProxy: 'enabled'
     }
   };
   
@@ -1119,16 +1110,17 @@ router.get('/health', (req, res) => {
 router.get('/cors-test', (req, res) => {
   res.json({
     success: true,
-    message: 'Enhanced Secure Upload routes CORS working',
+    message: 'Enhanced Streaming Proxy Upload routes CORS working',
     origin: req.headers.origin || 'Unknown',
     timestamp: new Date().toISOString(),
-    service: 'enhanced-upload-service-secure',
+    service: 'enhanced-upload-service-streaming-proxy',
     capabilities: {
       formdata: true,
       chunked: true,
-      directMultipart: ENABLE_MULTIPART_UPLOADS,
+      streamingProxyMultipart: ENABLE_MULTIPART_UPLOADS,
       customThumbnails: true,
-      security: 'enabled'
+      security: 'enabled',
+      cors: 'no_issues_with_streaming_proxy'
     }
   });
 });

@@ -1,4 +1,5 @@
 const B2 = require('backblaze-b2');
+const crypto = require('crypto');
 const { config } = require('../config');
 const logger = require('../utils/logger');
 const { updateUploadStatus, failUploadStatus } = require('../utils/status');
@@ -25,19 +26,22 @@ const b2ApiLimiter = {
   }
 };
 
+// Store active multipart uploads with their B2 URLs
+const activeUploads = new Map();
+
 /**
- * Secure Multipart Upload Service
- * Handles direct B2 multipart uploads with proper validation and rate limiting
+ * Streaming Proxy Multipart Upload Service
+ * Browser uploads to server, server streams to B2 - minimal memory usage
  */
 
 /**
- * Initialize a B2 large file upload with validation
+ * Initialize a B2 large file upload and pre-generate part URLs for streaming proxy
  * @param {string} uploadId - Unique upload identifier
  * @param {string} fileName - Original filename (will be sanitized)
  * @param {string} contentType - File content type
  * @param {string} bucketId - B2 bucket ID (optional, defaults to video bucket)
  * @param {Object} options - Additional options including user context
- * @returns {Promise<Object>} - B2 file ID and initial part URLs
+ * @returns {Promise<Object>} - B2 file ID and upload information
  */
 async function initializeMultipartUpload(uploadId, fileName, contentType = 'video/mp4', bucketId = null, options = {}) {
   try {
@@ -64,7 +68,7 @@ async function initializeMultipartUpload(uploadId, fileName, contentType = 'vide
       throw new Error(`Invalid content type: ${contentType}`);
     }
     
-    logger.info(`🚀 Initializing secure B2 multipart upload: ${uploadId} for ${sanitizedFileName}`);
+    logger.info(`🚀 Initializing streaming proxy B2 multipart upload: ${uploadId} for ${sanitizedFileName}`);
     
     // Rate limit B2 API calls
     await b2ApiLimiter.waitForNext();
@@ -81,7 +85,7 @@ async function initializeMultipartUpload(uploadId, fileName, contentType = 'vide
     
     updateUploadStatus(uploadId, {
       status: 'initializing',
-      stage: 'starting secure B2 multipart upload',
+      stage: 'starting streaming proxy B2 multipart upload',
       progress: 5,
       fileName: uniqueFileName
     });
@@ -114,185 +118,208 @@ async function initializeMultipartUpload(uploadId, fileName, contentType = 'vide
     
     logger.info(`✅ B2 multipart upload initialized: ${b2FileId}`);
     
-    updateUploadStatus(uploadId, {
-      status: 'ready_for_chunks',
-      stage: 'ready to receive chunks',
-      progress: 10,
+    // Store upload information for streaming proxy
+    activeUploads.set(uploadId, {
       b2FileId: b2FileId,
-      fileName: uniqueFileName
+      fileName: uniqueFileName,
+      bucketId: targetBucketId,
+      partUrls: new Map(), // Will store part URLs as needed
+      partSha1Array: [], // Will store SHA1 hashes in order
+      createdAt: Date.now()
     });
     
-    // Pre-generate part URLs for first few chunks (with rate limiting)
-    const initialPartUrls = await generatePartUrls(b2FileId, 1, 5);
+    updateUploadStatus(uploadId, {
+      status: 'ready_for_chunks',
+      stage: 'ready to receive chunks via streaming proxy',
+      progress: 10,
+      b2FileId: b2FileId,
+      fileName: uniqueFileName,
+      uploadMethod: 'streaming_proxy'
+    });
     
-    memoryMonitor.logMemoryUsage(`After multipart init ${uploadId}`);
+    memoryMonitor.logMemoryUsage(`After streaming proxy init ${uploadId}`);
     
     return {
       success: true,
+      uploadId: uploadId,
       b2FileId: b2FileId,
       fileName: uniqueFileName,
-      partUrls: initialPartUrls,
-      uploadId: uploadId,
-      expiresAt: Date.now() + (23 * 60 * 60 * 1000) // 23 hours
+      message: 'Streaming proxy multipart upload initialized',
+      instructions: {
+        step1: 'Upload chunks to /upload/multipart/stream-chunk',
+        step2: 'Server will stream chunks directly to B2',
+        step3: 'Call /upload/multipart/complete when all chunks uploaded',
+        step4: 'Monitor progress via WebSocket'
+      }
     };
     
   } catch (error) {
-    logger.error(`❌ Failed to initialize multipart upload ${uploadId}:`, error);
+    logger.error(`❌ Failed to initialize streaming proxy multipart upload ${uploadId}:`, error);
     failUploadStatus(uploadId, error);
     throw error;
   }
 }
 
 /**
- * Generate signed URLs for uploading specific parts with security checks
- * @param {string} b2FileId - B2 file ID from initialization
- * @param {number} startPartNumber - Starting part number (1-based)
- * @param {number} count - Number of part URLs to generate
- * @returns {Promise<Array>} - Array of part upload URLs
+ * Stream a chunk directly to B2 (proxy upload)
+ * @param {string} uploadId - Upload identifier
+ * @param {string} b2FileId - B2 file ID
+ * @param {number} partNumber - Part number (1-based)
+ * @param {Buffer|Stream} chunkData - Chunk data to upload
+ * @param {Object} options - Additional options
+ * @returns {Promise<Object>} - Upload result with SHA1
  */
-async function generatePartUrls(b2FileId, startPartNumber = 1, count = 10) {
+async function streamChunkToB2(uploadId, b2FileId, partNumber, chunkData, options = {}) {
   try {
     // Validate inputs
-    if (!b2FileId || typeof b2FileId !== 'string') {
-      throw new Error('Valid b2FileId is required');
+    if (!uploadId || !b2FileId || !partNumber || !chunkData) {
+      throw new Error('Missing required parameters for chunk streaming');
     }
     
-    if (startPartNumber < 1 || startPartNumber > 10000) {
+    if (partNumber < 1 || partNumber > 10000) {
       throw new Error('Part number must be between 1 and 10000');
     }
     
-    if (count < 1 || count > 100) {
-      throw new Error('Count must be between 1 and 100');
+    // Get upload info
+    const uploadInfo = activeUploads.get(uploadId);
+    if (!uploadInfo) {
+      throw new Error('Upload not found or expired');
     }
     
-    logger.debug(`🔗 Generating ${count} secure part URLs starting from part ${startPartNumber}`);
+    logger.info(`📤 Streaming chunk ${partNumber} to B2 for ${uploadId}`);
     
-    const partUrls = [];
-    
-    // Generate URLs for requested parts with rate limiting
-    for (let i = 0; i < count; i++) {
-      const partNumber = startPartNumber + i;
-      
-      // Prevent generating too many parts
-      if (partNumber > 10000) {
-        logger.warn(`Stopping part URL generation at part ${partNumber} (B2 limit: 10000)`);
-        break;
-      }
-      
+    // Get or create part URL for this part number
+    let partUrl = uploadInfo.partUrls.get(partNumber);
+    if (!partUrl) {
       await b2ApiLimiter.waitForNext();
-      
-      const uploadPartResponse = await b2.getUploadPartUrl({
+      const uploadPartUrlResponse = await b2.getUploadPartUrl({
         fileId: b2FileId
       });
       
-      partUrls.push({
-        partNumber: partNumber,
-        uploadUrl: uploadPartResponse.data.uploadUrl,
-        authorizationToken: uploadPartResponse.data.authorizationToken,
-        expiresAt: Date.now() + (23 * 60 * 60 * 1000), // 23 hours (B2 URLs valid for 24h)
-        generatedAt: Date.now()
-      });
+      partUrl = {
+        uploadUrl: uploadPartUrlResponse.data.uploadUrl,
+        authorizationToken: uploadPartUrlResponse.data.authorizationToken
+      };
+      
+      uploadInfo.partUrls.set(partNumber, partUrl);
     }
     
-    logger.debug(`✅ Generated ${partUrls.length} secure part URLs`);
-    return partUrls;
+    // Calculate SHA1 while streaming
+    const sha1Hash = crypto.createHash('sha1');
+    let totalBytes = 0;
     
-  } catch (error) {
-    logger.error(`❌ Failed to generate part URLs for ${b2FileId}:`, error);
-    throw error;
-  }
-}
-
-/**
- * Get additional part URLs if needed (for URL expiration or additional chunks)
- * @param {string} uploadId - Upload identifier
- * @param {string} b2FileId - B2 file ID
- * @param {number} fromPartNumber - Starting part number
- * @param {number} count - Number of URLs needed
- * @param {Object} context - User context for authorization
- * @returns {Promise<Array>} - Array of fresh part upload URLs
- */
-async function getAdditionalPartUrls(uploadId, b2FileId, fromPartNumber, count = 10, context = {}) {
-  try {
-    // Validate that this upload belongs to the requesting user (if context provided)
-    if (context.userId) {
-      const { getUploadStatus } = require('../utils/status');
-      const uploadStatus = getUploadStatus(uploadId);
-      
-      if (uploadStatus && uploadStatus.userId && uploadStatus.userId !== context.userId) {
-        throw new Error('Unauthorized: Upload does not belong to user');
+    // Handle both Buffer and Stream inputs
+    if (Buffer.isBuffer(chunkData)) {
+      sha1Hash.update(chunkData);
+      totalBytes = chunkData.length;
+    } else {
+      // Stream case - calculate hash as we read
+      const chunks = [];
+      for await (const chunk of chunkData) {
+        chunks.push(chunk);
+        sha1Hash.update(chunk);
+        totalBytes += chunk.length;
+      }
+      chunkData = Buffer.concat(chunks);
+    }
+    
+    const sha1Result = sha1Hash.digest('hex');
+    
+    // Upload to B2 with retry logic
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
+      try {
+        await b2ApiLimiter.waitForNext();
+        
+        const uploadResponse = await b2.uploadPart({
+          partNumber: partNumber,
+          uploadUrl: partUrl.uploadUrl,
+          uploadAuthToken: partUrl.authorizationToken,
+          data: chunkData,
+        });
+        
+        // Store SHA1 in correct order
+        uploadInfo.partSha1Array[partNumber - 1] = sha1Result;
+        
+        updateUploadStatus(uploadId, {
+          stage: `streamed chunk ${partNumber} to B2`,
+          progress: Math.min(95, 10 + (partNumber * 2)) // Rough progress estimate
+        });
+        
+        logger.info(`✅ Successfully streamed chunk ${partNumber} (${Math.floor(totalBytes / 1024 / 1024)}MB) to B2`);
+        
+        // Force garbage collection
+        if (global.gc) {
+          global.gc();
+        }
+        
+        memoryMonitor.logMemoryUsage(`After streaming chunk ${partNumber}`);
+        
+        return {
+          success: true,
+          partNumber: partNumber,
+          sha1: sha1Result,
+          size: totalBytes,
+          uploadResponse: uploadResponse
+        };
+        
+      } catch (error) {
+        retryCount++;
+        if (retryCount >= maxRetries) {
+          throw error;
+        }
+        logger.warn(`Retry ${retryCount}/${maxRetries} for chunk ${partNumber}: ${error.message}`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
       }
     }
     
-    logger.info(`🔄 Getting additional part URLs for ${uploadId}, parts ${fromPartNumber}-${fromPartNumber + count - 1}`);
-    
-    updateUploadStatus(uploadId, {
-      stage: `generating upload URLs for parts ${fromPartNumber}-${fromPartNumber + count - 1}`
-    });
-    
-    const partUrls = await generatePartUrls(b2FileId, fromPartNumber, count);
-    
-    return {
-      success: true,
-      partUrls: partUrls,
-      uploadId: uploadId
-    };
-    
   } catch (error) {
-    logger.error(`❌ Failed to get additional part URLs for ${uploadId}:`, error);
+    logger.error(`❌ Failed to stream chunk ${partNumber} for ${uploadId}:`, error);
     throw error;
   }
 }
 
 /**
- * Complete the multipart upload after all parts are uploaded with validation
+ * Complete the multipart upload after all chunks are streamed
  * @param {string} uploadId - Upload identifier
  * @param {string} b2FileId - B2 file ID
- * @param {Array} partSha1Array - Array of SHA1 hashes for each part
+ * @param {number} totalParts - Total number of parts uploaded
  * @param {string} originalFileName - Original filename for metadata
  * @param {string} videoId - Optional video ID for database updates
  * @param {Object} context - User context for authorization
  * @returns {Promise<Object>} - Upload completion result
  */
-async function completeMultipartUpload(uploadId, b2FileId, partSha1Array, originalFileName, videoId = null, context = {}) {
+async function completeMultipartUpload(uploadId, b2FileId, totalParts, originalFileName, videoId = null, context = {}) {
   try {
     // Validate inputs
-    if (!uploadId || !b2FileId || !Array.isArray(partSha1Array) || !originalFileName) {
+    if (!uploadId || !b2FileId || !totalParts || !originalFileName) {
       throw new Error('Missing required parameters for upload completion');
     }
     
-    if (partSha1Array.length === 0) {
-      throw new Error('No parts provided for upload completion');
+    if (totalParts < 1 || totalParts > 10000) {
+      throw new Error('Invalid total parts count');
     }
     
-    if (partSha1Array.length > 10000) {
-      throw new Error('Too many parts (B2 limit: 10000)');
+    // Get upload info
+    const uploadInfo = activeUploads.get(uploadId);
+    if (!uploadInfo) {
+      throw new Error('Upload not found or expired');
     }
     
-    // Validate SHA1 format
-    const sha1Regex = /^[a-f0-9]{40}$/i;
-    for (let i = 0; i < partSha1Array.length; i++) {
-      if (!sha1Regex.test(partSha1Array[i])) {
-        throw new Error(`Invalid SHA1 hash at index ${i}: ${partSha1Array[i]}`);
-      }
+    // Ensure we have all SHA1 hashes
+    const partSha1Array = uploadInfo.partSha1Array.slice(0, totalParts);
+    if (partSha1Array.length !== totalParts || partSha1Array.some(hash => !hash)) {
+      throw new Error(`Missing SHA1 hashes. Expected ${totalParts}, got ${partSha1Array.filter(h => h).length}`);
     }
     
-    // Validate authorization if context provided
-    if (context.userId) {
-      const { getUploadStatus } = require('../utils/status');
-      const uploadStatus = getUploadStatus(uploadId);
-      
-      if (uploadStatus && uploadStatus.userId && uploadStatus.userId !== context.userId) {
-        throw new Error('Unauthorized: Upload does not belong to user');
-      }
-    }
-    
-    logger.info(`🏁 Completing multipart upload ${uploadId} with ${partSha1Array.length} parts`);
+    logger.info(`🏁 Completing streaming proxy multipart upload ${uploadId} with ${totalParts} parts`);
     
     updateUploadStatus(uploadId, {
       status: 'finalizing',
       stage: 'finalizing B2 multipart upload',
-      progress: 90
+      progress: 95
     });
     
     // Rate limit the finalization call
@@ -325,19 +352,22 @@ async function completeMultipartUpload(uploadId, b2FileId, partSha1Array, origin
     const fileName = finishResponse.data.fileName;
     const videoUrl = `https://${bucketName}.s3.eu-central-003.backblazeb2.com/${fileName}`;
     
-    logger.info(`✅ Multipart upload completed: ${videoUrl}`);
+    logger.info(`✅ Streaming proxy multipart upload completed: ${videoUrl}`);
+    
+    // Clean up active upload
+    activeUploads.delete(uploadId);
     
     updateUploadStatus(uploadId, {
       status: 'processing_metadata',
       stage: 'video uploaded, processing thumbnails...',
-      progress: 95,
+      progress: 98,
       videoUrl: videoUrl
     });
     
     // Queue background thumbnail generation
     const backgroundTaskResult = await queueBackgroundProcessing(uploadId, videoUrl, originalFileName, videoId);
     
-    memoryMonitor.logMemoryUsage(`After multipart completion ${uploadId}`);
+    memoryMonitor.logMemoryUsage(`After streaming proxy completion ${uploadId}`);
     
     return {
       success: true,
@@ -345,11 +375,15 @@ async function completeMultipartUpload(uploadId, b2FileId, partSha1Array, origin
       fileName: fileName,
       uploadId: uploadId,
       backgroundTask: backgroundTaskResult,
-      fileSize: finishResponse.data.contentLength
+      fileSize: finishResponse.data.contentLength,
+      totalParts: totalParts
     };
     
   } catch (error) {
-    logger.error(`❌ Failed to complete multipart upload ${uploadId}:`, error);
+    logger.error(`❌ Failed to complete streaming proxy multipart upload ${uploadId}:`, error);
+    
+    // Clean up on error
+    activeUploads.delete(uploadId);
     
     // Attempt cleanup of incomplete upload
     try {
@@ -374,17 +408,10 @@ async function completeMultipartUpload(uploadId, b2FileId, partSha1Array, origin
  */
 async function cancelMultipartUpload(uploadId, b2FileId, context = {}) {
   try {
-    // Validate authorization if context provided
-    if (context.userId) {
-      const { getUploadStatus } = require('../utils/status');
-      const uploadStatus = getUploadStatus(uploadId);
-      
-      if (uploadStatus && uploadStatus.userId && uploadStatus.userId !== context.userId) {
-        throw new Error('Unauthorized: Upload does not belong to user');
-      }
-    }
+    logger.info(`🛑 Cancelling streaming proxy multipart upload ${uploadId}`);
     
-    logger.info(`🛑 Cancelling multipart upload ${uploadId}`);
+    // Clean up active upload
+    activeUploads.delete(uploadId);
     
     await b2ApiLimiter.waitForNext();
     await b2.cancelLargeFile({ fileId: b2FileId });
@@ -402,6 +429,15 @@ async function cancelMultipartUpload(uploadId, b2FileId, context = {}) {
     logger.error(`❌ Failed to cancel upload ${uploadId}:`, error);
     return false;
   }
+}
+
+/**
+ * Get upload information for streaming proxy
+ * @param {string} uploadId - Upload identifier
+ * @returns {Object|null} - Upload information or null if not found
+ */
+function getUploadInfo(uploadId) {
+  return activeUploads.get(uploadId) || null;
 }
 
 /**
@@ -447,86 +483,6 @@ async function queueBackgroundProcessing(uploadId, videoUrl, originalFileName, v
 }
 
 /**
- * Get multipart upload status and progress with authorization
- * @param {string} uploadId - Upload identifier
- * @param {string} b2FileId - B2 file ID
- * @param {Object} context - User context for authorization
- * @returns {Promise<Object>} - Upload status information
- */
-async function getMultipartUploadStatus(uploadId, b2FileId, context = {}) {
-  try {
-    // Get current status from status utility
-    const { getUploadStatus } = require('../utils/status');
-    const currentStatus = getUploadStatus(uploadId);
-    
-    if (!currentStatus) {
-      return {
-        found: false,
-        message: 'Upload not found or expired'
-      };
-    }
-    
-    // Validate authorization if context provided
-    if (context.userId && currentStatus.userId && currentStatus.userId !== context.userId) {
-      return {
-        found: false,
-        message: 'Upload not found or expired' // Don't reveal unauthorized access
-      };
-    }
-    
-    // Enhance with B2-specific information if available
-    const enhanced = {
-      ...currentStatus,
-      b2FileId: b2FileId,
-      multipartUpload: true,
-      lastChecked: new Date().toISOString(),
-      // Remove sensitive information
-      authorizationToken: undefined
-    };
-    
-    return enhanced;
-    
-  } catch (error) {
-    logger.error(`❌ Failed to get multipart upload status for ${uploadId}:`, error);
-    throw error;
-  }
-}
-
-/**
- * Test B2 multipart upload capability
- * @returns {Promise<boolean>} - Success status
- */
-async function testMultipartCapability() {
-  try {
-    logger.info('🧪 Testing B2 multipart upload capability...');
-    
-    await b2ApiLimiter.waitForNext();
-    await b2.authorize();
-    
-    // Test with a minimal file initialization
-    await b2ApiLimiter.waitForNext();
-    const testResponse = await b2.startLargeFile({
-      bucketId: config.b2.buckets.video.id,
-      fileName: `test_multipart_${Date.now()}_${generateSecureId()}.txt`,
-      contentType: 'text/plain',
-    });
-    
-    const testFileId = testResponse.data.fileId;
-    
-    // Immediately cancel the test upload
-    await b2ApiLimiter.waitForNext();
-    await b2.cancelLargeFile({ fileId: testFileId });
-    
-    logger.info('✅ B2 multipart upload capability confirmed');
-    return true;
-    
-  } catch (error) {
-    logger.error('❌ B2 multipart upload test failed:', error);
-    return false;
-  }
-}
-
-/**
  * Utility functions
  */
 
@@ -562,12 +518,28 @@ function generateSecureId() {
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 }
 
+/**
+ * Cleanup old active uploads (prevent memory leaks)
+ */
+function cleanupOldUploads() {
+  const now = Date.now();
+  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+  
+  for (const [uploadId, uploadInfo] of activeUploads.entries()) {
+    if (now - uploadInfo.createdAt > maxAge) {
+      logger.info(`🧹 Cleaning up old upload: ${uploadId}`);
+      activeUploads.delete(uploadId);
+    }
+  }
+}
+
+// Clean up old uploads every hour
+setInterval(cleanupOldUploads, 60 * 60 * 1000);
+
 module.exports = {
   initializeMultipartUpload,
-  generatePartUrls,
-  getAdditionalPartUrls,
+  streamChunkToB2,
   completeMultipartUpload,
   cancelMultipartUpload,
-  getMultipartUploadStatus,
-  testMultipartCapability
+  getUploadInfo
 };
