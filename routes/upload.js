@@ -34,7 +34,7 @@ const strictRateLimit = rateLimit({
 
 const moderateRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // 20 requests per IP per 15 minutes
+  max: 2000, // 2000 requests per IP per 15 minutes
   message: {
     error: 'Too many requests. Please slow down.',
     retryAfter: '15 minutes'
@@ -45,7 +45,7 @@ const moderateRateLimit = rateLimit({
 
 const generalRateLimit = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 60, // 60 requests per IP per minute
+  max: 300, // 300 requests per IP per minute
   message: {
     error: 'Too many requests. Please wait.',
     retryAfter: '1 minute'
