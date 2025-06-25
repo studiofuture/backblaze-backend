@@ -232,8 +232,8 @@ function validateEnvironment() {
   // Validate bucket IDs format
   ['B2_VIDEO_BUCKET_ID', 'B2_THUMBNAIL_BUCKET_ID', 'B2_PROFILE_BUCKET_ID'].forEach(bucketVar => {
     const bucketId = process.env[bucketVar];
-    if (bucketId && !/^[a-fA-F0-9]{25}$/.test(bucketId)) {
-      logger.warn(`⚠️ ${bucketVar} format appears invalid (should be 25 hex characters)`);
+    if (bucketId && !/^[a-fA-F0-9]{24}$/.test(bucketId)) {
+      logger.warn(`⚠️ ${bucketVar} format appears invalid (should be 24 hex characters)`);
     }
   });
   
