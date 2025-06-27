@@ -85,10 +85,10 @@ router.delete('/:videoId', async (req, res) => {
       return res.status(500).json({ error: "Supabase client not available" });
     }
     
-    // Look up the filename from Supabase - try different column names
+    // Look up the video data from Supabase
     const { data, error } = await supabase
       .from('videos')
-      .select('storage_url, url, original_filename')
+      .select('storage_url, url, original_filename, thumbnail_url')
       .eq('id', videoId)
       .single();
     
@@ -102,25 +102,25 @@ router.delete('/:videoId', async (req, res) => {
       return res.status(404).json({ error: "Video not found in database" });
     }
     
-    // Extract filename from various possible URL fields
+    // Extract filename from the storage URL
     let filename;
     let sourceUrl = data.storage_url || data.url || '';
     
     if (sourceUrl) {
-      // Try to extract the filename from the URL
-      // Handle both formats: full URL and relative path
-      if (sourceUrl.includes('/')) {
-        filename = sourceUrl.split('/').pop();
-      } else {
-        filename = sourceUrl;
+      // Extract just the filename from the full URL
+      // For example: https://rushes-videos.s3.eu-central-003.backblazeb2.com/RC_Vision_v5_-_with_subs_1751017336146_kcf9rt4jjmcemifki.mov
+      // We want: RC_Vision_v5_-_with_subs_1751017336146_kcf9rt4jjmcemifki.mov
+      
+      // Remove any query parameters first
+      if (sourceUrl.includes('?')) {
+        sourceUrl = sourceUrl.split('?')[0];
       }
       
-      // Make sure we have a clean filename without any URL parameters
-      if (filename.includes('?')) {
-        filename = filename.split('?')[0];
-      }
-    } else if (data.original_filename) {
-      filename = data.original_filename;
+      // Get the last part after the final slash
+      const parts = sourceUrl.split('/');
+      filename = parts[parts.length - 1];
+      
+      logger.info(`📌 Extracted filename from URL: ${filename}`);
     }
     
     if (!filename) {
@@ -128,47 +128,44 @@ router.delete('/:videoId', async (req, res) => {
       return res.status(400).json({ error: "Could not determine filename for deletion" });
     }
     
-    logger.info(`📌 Found filename for video ${videoId}: ${filename}`);
-    
-    // Handle special characters in filename (decodeURIComponent)
+    // Delete the video file from B2
+    let videoDeleted = false;
     try {
-      if (filename.includes('%')) {
-        const decodedFilename = decodeURIComponent(filename);
-        logger.info(`📌 Decoded filename: ${decodedFilename}`);
-        filename = decodedFilename;
-      }
-    } catch (decodeError) {
-      logger.warn(`⚠️ Error decoding filename: ${decodeError.message}. Using original.`);
-    }
-    
-    // Delete the file from B2
-    let deleted = false;
-    try {
-      deleted = await b2Service.deleteFile(filename, config.b2.buckets.video.id);
+      videoDeleted = await b2Service.deleteFile(filename, config.b2.buckets.video.id);
       
-      if (!deleted) {
-        logger.warn(`⚠️ File ${filename} not found in B2 bucket`);
+      if (!videoDeleted) {
+        logger.warn(`⚠️ Video file ${filename} not found in B2 bucket`);
       } else {
-        logger.info(`✅ Successfully deleted file ${filename} from B2`);
+        logger.info(`✅ Successfully deleted video file ${filename} from B2`);
       }
     } catch (b2Error) {
-      logger.error(`❌ Error deleting from B2:`, b2Error);
-      // Continue anyway, don't return an error to the client
+      logger.error(`❌ Error deleting video from B2:`, b2Error);
+      // Continue anyway - we still want to try deleting the thumbnail
     }
     
     // Try to delete the thumbnail as well if present
+    let thumbnailDeleted = false;
     if (data.thumbnail_url) {
       try {
-        const thumbnailFilename = data.thumbnail_url.split('/').pop();
+        // Extract thumbnail filename from URL
+        let thumbnailUrl = data.thumbnail_url;
+        if (thumbnailUrl.includes('?')) {
+          thumbnailUrl = thumbnailUrl.split('?')[0];
+        }
+        const thumbnailParts = thumbnailUrl.split('/');
+        const thumbnailFilename = thumbnailParts[thumbnailParts.length - 1];
+        
         if (thumbnailFilename) {
           logger.info(`📌 Attempting to delete thumbnail: ${thumbnailFilename}`);
-          const thumbDeleted = await b2Service.deleteFile(
+          thumbnailDeleted = await b2Service.deleteFile(
             thumbnailFilename, 
             config.b2.buckets.thumbnail.id
           );
           
-          if (thumbDeleted) {
+          if (thumbnailDeleted) {
             logger.info(`✅ Successfully deleted thumbnail ${thumbnailFilename}`);
+          } else {
+            logger.warn(`⚠️ Thumbnail file ${thumbnailFilename} not found in B2 bucket`);
           }
         }
       } catch (thumbError) {
@@ -177,11 +174,15 @@ router.delete('/:videoId', async (req, res) => {
       }
     }
     
-    // Return success even if B2 deletion failed
+    // Return success with detailed status
     res.json({ 
       status: "success", 
-      message: `Video ${videoId} deletion process completed`,
-      b2DeleteStatus: deleted ? 'success' : 'not_found'
+      message: `Video ${videoId} deletion completed`,
+      details: {
+        videoDeleted: videoDeleted,
+        thumbnailDeleted: thumbnailDeleted,
+        videoFilename: filename
+      }
     });
   } catch (error) {
     logger.error(`❌ Error in delete by ID endpoint:`, error);

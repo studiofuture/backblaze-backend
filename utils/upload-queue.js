@@ -161,6 +161,41 @@ async function processThumbnailJob(job) {
     const thumbnailUrl = await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
     logger.info(`✅ Thumbnail uploaded: ${thumbnailUrl}`);
     
+    // Extract video metadata if we haven't already
+    let videoMetadata = null;
+    try {
+      logger.info(`📊 Extracting video metadata from: ${videoUrl}`);
+      
+      // Use FFmpeg to get video information
+      const ffmpeg = require('fluent-ffmpeg');
+      await new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(videoUrl, (err, metadata) => {
+          if (err) {
+            logger.warn(`⚠️ Could not extract video metadata: ${err.message}`);
+            resolve(); // Don't fail the job for this
+            return;
+          }
+          
+          const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+          if (videoStream) {
+            videoMetadata = {
+              duration: parseFloat(metadata.format.duration || 0),
+              width: videoStream.width || 0,
+              height: videoStream.height || 0,
+              codec: videoStream.codec_name || '',
+              bitrate: parseInt(metadata.format.bit_rate || 0),
+              size: parseInt(metadata.format.size || 0)
+            };
+            logger.info(`✅ Extracted video metadata:`, videoMetadata);
+          }
+          resolve();
+        });
+      });
+    } catch (metadataError) {
+      logger.warn(`⚠️ Metadata extraction failed: ${metadataError.message}`);
+      // Continue without metadata
+    }
+    
     // Clean up local thumbnail file
     if (fs.existsSync(thumbnailPath)) {
       fs.unlinkSync(thumbnailPath);
@@ -178,7 +213,12 @@ async function processThumbnailJob(job) {
           }
         });
         
-        await supabaseService.updateThumbnail(videoId, thumbnailUrl, {
+        await supabaseService.updateVideoMetadata(videoId, {
+          url: videoUrl,
+          thumbnailUrl: thumbnailUrl,
+          duration: videoMetadata?.duration || 0,
+          width: videoMetadata?.width || 0,
+          height: videoMetadata?.height || 0,
           processing_completed_at: new Date().toISOString(),
           thumbnail_generated_by: 'background_processor'
         });
