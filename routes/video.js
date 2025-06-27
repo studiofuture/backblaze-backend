@@ -105,9 +105,10 @@ router.delete('/:videoId', async (req, res) => {
     
     // PHASE 1: Get video data from database
     logger.info(`📋 Phase 1: Retrieving video data from database`);
+    // FIXED: Removed 'url' from the select query - only use columns that exist
     const { data, error } = await supabase
       .from('videos')
-      .select('storage_url, url, original_filename, thumbnail_url')
+      .select('storage_url, original_filename, thumbnail_url')
       .eq('id', videoId)
       .single();
     
@@ -124,7 +125,8 @@ router.delete('/:videoId', async (req, res) => {
     
     // Extract video filename
     let videoFilename = null;
-    let sourceUrl = data.storage_url || data.url || '';
+    // FIXED: Only use storage_url since 'url' column doesn't exist
+    let sourceUrl = data.storage_url || '';
     
     if (sourceUrl) {
       // Remove query parameters
@@ -297,9 +299,10 @@ router.post('/cleanup/orphaned', async (req, res) => {
     
     // Step 1: Get all video URLs from database
     logger.info(`📋 Fetching all video records from database`);
+    // FIXED: Removed 'url' from the select query
     const { data: videos, error: dbError } = await supabase
       .from('videos')
-      .select('storage_url, url, thumbnail_url');
+      .select('storage_url, thumbnail_url');
     
     if (dbError) {
       throw new Error(`Database query failed: ${dbError.message}`);
@@ -310,9 +313,9 @@ router.post('/cleanup/orphaned', async (req, res) => {
     const knownThumbnailFiles = new Set();
     
     videos.forEach(video => {
-      // Extract video filename
-      if (video.storage_url || video.url) {
-        const url = video.storage_url || video.url;
+      // Extract video filename - FIXED: Only use storage_url
+      if (video.storage_url) {
+        const url = video.storage_url;
         const filename = url.split('/').pop().split('?')[0];
         if (filename) knownVideoFiles.add(filename);
       }
