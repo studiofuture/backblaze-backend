@@ -96,7 +96,6 @@ async function updateVideoMetadata(videoId, metadata) {
               title: title,
               description: '',
               status: 'published',
-              is_public: true,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
             })
