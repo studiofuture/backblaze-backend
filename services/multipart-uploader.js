@@ -1,3 +1,4 @@
+const b2Service = require('./b2');
 const B2 = require('backblaze-b2');
 const crypto = require('crypto');
 const { config } = require('../config');
