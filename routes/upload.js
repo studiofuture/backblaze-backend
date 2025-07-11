@@ -110,7 +110,7 @@ console.log('🔧 DEBUG: MULTIPART_UPLOADS =', ENABLE_MULTIPART_UPLOADS);
 /**
  * EXISTING: FORMDATA UPLOAD ROUTE
  * POST /upload/video
- * Handles traditional FormData uploads with Busboy - UNCHANGED
+ * MODIFIED: Returns metadata in response
  */
 router.post('/video', generalRateLimit, validateUploadInput, async (req, res) => {
   let uploadId;
@@ -127,7 +127,17 @@ router.post('/video', generalRateLimit, validateUploadInput, async (req, res) =>
       status: "success",
       uploadId,
       message: "Upload completed successfully",
-      url: result.videoUrl, 
+      url: result.videoUrl,
+      // Include metadata in response
+      metadata: result.metadata || {
+        duration: 0,
+        width: 0,
+        height: 0,
+        codec: '',
+        bitrate: 0,
+        size: 0
+      },
+      thumbnailUrl: result.thumbnailUrl || null,
       ...result
     });
     
@@ -490,9 +500,9 @@ router.post('/multipart/stream-chunk', moderateRateLimit, validateUploadInput, a
 });
 
 /**
- * NEW: Complete Streaming Proxy Multipart Upload
+ * Complete Streaming Proxy Multipart Upload
  * POST /upload/multipart/complete
- * Finalizes B2 upload and triggers background processing
+ * MODIFIED: Returns metadata in response
  */
 router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
   try {
@@ -554,8 +564,8 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
       progress: 95
     });
     
-    // Complete the multipart upload
-    const b2Result = await multipartUploader.completeMultipartUpload(
+    // Complete the multipart upload (now includes metadata extraction)
+    const result = await multipartUploader.completeMultipartUpload(
       sanitizedUploadId,
       sanitizedB2FileId,
       sanitizedTotalParts,
@@ -564,43 +574,36 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
       { clientIP: req.ip }
     );
     
-    console.log(`✅ B2 upload finalized: ${b2Result.videoUrl}`);
+    console.log(`✅ B2 upload finalized with metadata: ${result.videoUrl}`);
     
-    updateUploadStatus(sanitizedUploadId, {
-      status: 'processing_background',
-      stage: 'video uploaded, processing thumbnails in background...',
-      progress: 98,
-      videoUrl: b2Result.videoUrl
-    });
-    
-    // Mark upload as complete with final data
+    // Mark upload as complete with all data
     completeUploadStatus(sanitizedUploadId, {
-      videoUrl: b2Result.videoUrl,
-      fileName: b2Result.fileName,
+      videoUrl: result.videoUrl,
+      fileName: result.fileName,
       uploadMethod: 'streaming_proxy',
       partsUploaded: sanitizedTotalParts,
-      backgroundTask: b2Result.backgroundTask,
       publishReady: true,
       completedAt: new Date().toISOString(),
-      fileSize: b2Result.fileSize
+      fileSize: result.fileSize,
+      metadata: result.metadata,
+      thumbnailUrl: result.thumbnailUrl
     });
     
     console.log(`🎉 Streaming proxy multipart upload completed successfully: ${sanitizedUploadId}`);
     
+    // Return response with metadata
     res.json({
       success: true,
       uploadId: sanitizedUploadId,
-      videoUrl: b2Result.videoUrl,
-      fileName: b2Result.fileName,
+      videoUrl: result.videoUrl,
+      fileName: result.fileName,
       partsUploaded: sanitizedTotalParts,
-      fileSize: b2Result.fileSize,
+      fileSize: result.fileSize,
       publishReady: true,
-      backgroundProcessing: {
-        thumbnailGeneration: b2Result.backgroundTask,
-        estimatedTime: '1-2 minutes',
-        trackingMethod: 'WebSocket status updates'
-      },
-      message: 'Streaming proxy upload completed successfully! Video is ready to view. Thumbnail generation in progress.'
+      // Include metadata in response for frontend
+      metadata: result.metadata,
+      thumbnailUrl: result.thumbnailUrl,
+      message: 'Upload completed successfully with metadata extracted'
     });
     
   } catch (error) {

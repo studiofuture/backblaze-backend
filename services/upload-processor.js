@@ -4,12 +4,11 @@ const { updateUploadStatus, completeUploadStatus, failUploadStatus } = require('
 const { generateUniqueFilename, getUploadPath } = require('../utils/directory');
 const b2Service = require('./b2');
 const ffmpegService = require('./ffmpeg');
-const supabaseService = require('./supabase');
 
 /**
  * Upload Processor Service
- * Handles the complete video processing pipeline: FFmpeg → B2 → Supabase
- * Used by both FormData and chunked uploads
+ * MODIFIED: Processes everything synchronously and returns metadata
+ * No more background processing - everything happens before response
  */
 
 /**
@@ -17,7 +16,7 @@ const supabaseService = require('./supabase');
  * @param {string} uploadId - Unique upload identifier
  * @param {string} tempFilePath - Path to the video file to process
  * @param {string} originalName - Original filename from client
- * @param {string} videoId - Optional video ID for Supabase update
+ * @param {string} videoId - Optional video ID for frontend reference
  * @returns {Promise<Object>} - Processing result with URLs and metadata
  */
 async function processVideo(uploadId, tempFilePath, originalName, videoId) {
@@ -27,7 +26,7 @@ async function processVideo(uploadId, tempFilePath, originalName, videoId) {
   try {
     console.log(`🚀 Video processing started for ${uploadId}`);
     
-    // Step 1: Extract video metadata
+    // Step 1: Extract video metadata FIRST (before upload)
     updateUploadStatus(uploadId, {
       stage: 'extracting video metadata',
       progress: 60
@@ -42,7 +41,7 @@ async function processVideo(uploadId, tempFilePath, originalName, videoId) {
       });
     } catch (metadataError) {
       console.warn(`⚠️ Metadata extraction failed: ${metadataError.message}`);
-      videoMetadata = { duration: 0, width: 0, height: 0, size: 0 };
+      videoMetadata = { duration: 0, width: 0, height: 0, size: 0, codec: '', bitrate: 0 };
     }
 
     // Step 2: Generate thumbnail
@@ -117,34 +116,18 @@ async function processVideo(uploadId, tempFilePath, originalName, videoId) {
       console.log(`🧹 Temp file cleaned up: ${tempFilePath}`);
     }
     
-    // Step 5: Update Supabase database if videoId provided
-    if (videoId && supabaseService) {
-      try {
-        updateUploadStatus(uploadId, {
-          stage: 'updating database',
-          progress: 95
-        });
-        
-        await supabaseService.updateVideoMetadata(videoId, {
-          url: videoUrl,
-          thumbnailUrl: thumbnailUrl,
-          duration: videoMetadata?.duration || 0,
-          width: videoMetadata?.width || 0,
-          height: videoMetadata?.height || 0
-        });
-        
-        console.log(`✅ Supabase database updated for video ${videoId}`);
-      } catch (supabaseError) {
-        console.error(`⚠️ Database update failed: ${supabaseError.message}`);
-        // Continue anyway - upload was successful
-      }
-    }
-    
-    // Step 6: Complete with full data
+    // Step 5: Complete with full data (no database update from server)
     const finalData = {
       videoUrl,
       thumbnailUrl: thumbnailUrl,
-      metadata: videoMetadata,
+      metadata: videoMetadata || {
+        duration: 0,
+        width: 0,
+        height: 0,
+        codec: '',
+        bitrate: 0,
+        size: 0
+      },
       uploadComplete: true,
       publishReady: true,
       completedAt: new Date().toISOString(),

@@ -4,6 +4,9 @@ const { config } = require('../config');
 const logger = require('../utils/logger');
 const { updateUploadStatus, failUploadStatus } = require('../utils/status');
 const memoryMonitor = require('../utils/memory-monitor');
+const fs = require('fs');
+const path = require('path');
+const { getUploadPath, ensureDirectory } = require('../utils/directory');
 
 // Initialize B2 client for multipart operations
 const b2 = new B2({
@@ -291,6 +294,10 @@ async function streamChunkToB2(uploadId, b2FileId, partNumber, chunkData, option
  * @param {Object} context - User context for authorization
  * @returns {Promise<Object>} - Upload completion result
  */
+/**
+ * Complete the multipart upload after all chunks are streamed
+ * MODIFIED: Extract metadata before returning response
+ */
 async function completeMultipartUpload(uploadId, b2FileId, totalParts, originalFileName, videoId = null, context = {}) {
   try {
     // Validate inputs
@@ -358,25 +365,77 @@ async function completeMultipartUpload(uploadId, b2FileId, totalParts, originalF
     activeUploads.delete(uploadId);
     
     updateUploadStatus(uploadId, {
-      status: 'processing_metadata',
-      stage: 'video uploaded, processing thumbnails...',
-      progress: 98,
-      videoUrl: videoUrl
+      status: 'extracting_metadata',
+      stage: 'extracting video metadata...',
+      progress: 98
     });
     
-    // Queue background thumbnail generation
-    const backgroundTaskResult = await queueBackgroundProcessing(uploadId, videoUrl, originalFileName, videoId);
+    // EXTRACT METADATA NOW (not in background)
+    let videoMetadata = null;
+    let thumbnailUrl = null;
+    
+    try {
+      // Extract video metadata using FFprobe
+      const ffmpegService = require('../services/ffmpeg');
+      logger.info(`📊 Extracting metadata from: ${videoUrl}`);
+      
+      videoMetadata = await ffmpegService.extractVideoMetadata(videoUrl);
+      logger.info(`✅ Extracted video metadata:`, videoMetadata);
+      
+      // Generate thumbnail
+      updateUploadStatus(uploadId, {
+        stage: 'generating thumbnail...',
+        progress: 99
+      });
+      
+      const timestamp = uploadId.split('_')[1] || Date.now();
+      const baseName = path.basename(originalFileName, path.extname(originalFileName));
+      const thumbnailFileName = `${baseName}_${timestamp}.jpg`;
+      const thumbnailPath = getUploadPath('thumbs', thumbnailFileName);
+      
+      await ensureDirectory('uploads/thumbs');
+      await ffmpegService.extractThumbnailFromRemote(videoUrl, thumbnailPath, 5);
+      
+      // Upload thumbnail to B2
+      thumbnailUrl = await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
+      logger.info(`✅ Thumbnail uploaded: ${thumbnailUrl}`);
+      
+      // Clean up local thumbnail
+      if (fs.existsSync(thumbnailPath)) {
+        fs.unlinkSync(thumbnailPath);
+      }
+      
+    } catch (metadataError) {
+      logger.error(`⚠️ Metadata/thumbnail extraction failed: ${metadataError.message}`);
+      // Continue without metadata - don't fail the entire upload
+    }
+    
+    updateUploadStatus(uploadId, {
+      status: 'complete',
+      stage: 'upload complete',
+      progress: 100
+    });
     
     memoryMonitor.logMemoryUsage(`After streaming proxy completion ${uploadId}`);
     
+    // Return ALL data including metadata
     return {
       success: true,
       videoUrl: videoUrl,
       fileName: fileName,
       uploadId: uploadId,
-      backgroundTask: backgroundTaskResult,
       fileSize: finishResponse.data.contentLength,
-      totalParts: totalParts
+      totalParts: totalParts,
+      // Include metadata in response
+      metadata: videoMetadata || {
+        duration: 0,
+        width: 0,
+        height: 0,
+        codec: '',
+        bitrate: 0,
+        size: 0
+      },
+      thumbnailUrl: thumbnailUrl || null
     };
     
   } catch (error) {
