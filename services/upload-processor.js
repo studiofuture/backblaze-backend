@@ -33,7 +33,8 @@ async function processVideo(uploadId, tempFilePath, originalName, videoId) {
     });
     
     try {
-      videoMetadata = await ffmpegService.extractVideoMetadata(tempFilePath);
+      // Use the unified function that handles both local and remote files
+      videoMetadata = await ffmpegService.extractVideoMetadataUnified(tempFilePath);
       console.log(`✅ Metadata extracted for ${uploadId}:`, {
         duration: videoMetadata.duration,
         dimensions: `${videoMetadata.width}x${videoMetadata.height}`,

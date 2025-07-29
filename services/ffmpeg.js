@@ -106,6 +106,118 @@ async function extractVideoMetadata(videoPath) {
 }
 
 /**
+ * Extract video metadata from a remote URL
+ * @param {string} videoUrl - URL of the video
+ * @returns {Promise<Object>} - Video metadata
+ */
+async function extractMetadataFromRemote(videoUrl) {
+  return new Promise((resolve, reject) => {
+    logger.info(`📊 Extracting metadata from remote URL: ${videoUrl}`);
+    
+    const ffprobeArgs = [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height,codec_name:format=duration,size,bit_rate',
+      '-of', 'json',
+      '-analyzeduration', '5000000', // Analyze first 5 seconds only
+      '-probesize', '5000000', // Probe first 5MB only
+      videoUrl
+    ];
+    
+    const ffprobeProcess = spawn('ffprobe', ffprobeArgs);
+    let output = '';
+    let errorOutput = '';
+    
+    ffprobeProcess.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+    
+    ffprobeProcess.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+    });
+    
+    // Set timeout to prevent hanging
+    const timeout = setTimeout(() => {
+      ffprobeProcess.kill();
+      reject(new Error('Metadata extraction timeout after 30 seconds'));
+    }, 30000);
+    
+    ffprobeProcess.on('close', (code) => {
+      clearTimeout(timeout);
+      
+      if (code !== 0) {
+        reject(new Error(`FFprobe failed with code ${code}: ${errorOutput}`));
+        return;
+      }
+      
+      try {
+        const metadata = JSON.parse(output);
+        const videoStream = metadata.streams?.[0];
+        const format = metadata.format;
+        
+        if (!videoStream || !format) {
+          reject(new Error('No valid video stream found'));
+          return;
+        }
+        
+        const result = {
+          duration: parseFloat(format.duration || 0),
+          width: videoStream.width || 0,
+          height: videoStream.height || 0,
+          codec: videoStream.codec_name || '',
+          bitrate: parseInt(format.bit_rate || 0),
+          size: parseInt(format.size || 0),
+        };
+        
+        logger.info(`✅ Extracted remote metadata:`, result);
+        resolve(result);
+      } catch (parseError) {
+        reject(new Error(`Failed to parse metadata: ${parseError.message}`));
+      }
+    });
+    
+    ffprobeProcess.on('error', (error) => {
+      clearTimeout(timeout);
+      logger.error(`❌ FFprobe process error: ${error.message}`);
+      reject(error);
+    });
+  });
+}
+
+/**
+ * Unified function to extract metadata from either local files or remote URLs
+ * @param {string} source - Local file path or remote URL
+ * @returns {Promise<Object>} - Video metadata
+ */
+async function extractVideoMetadataUnified(source) {
+  try {
+    // Determine if source is local file or URL
+    const isRemote = source.startsWith('http://') || source.startsWith('https://');
+    
+    if (isRemote) {
+      logger.info(`📊 Detected remote source: ${source}`);
+      return await extractMetadataFromRemote(source);
+    } else {
+      logger.info(`📊 Detected local source: ${source}`);
+      return await extractVideoMetadata(source);
+    }
+  } catch (error) {
+    logger.warn(`⚠️ Metadata extraction failed: ${error.message}`);
+    
+    // Return safe defaults instead of throwing
+    return {
+      duration: 0,
+      width: 0,
+      height: 0,
+      codec: 'unknown',
+      bitrate: 0,
+      size: 0,
+      error: error.message
+    };
+  }
+}
+
+/**
  * Extract a thumbnail from a remote video URL
  * @param {string} videoUrl - URL of the video
  * @param {string} thumbnailPath - Path for the thumbnail output
@@ -264,6 +376,8 @@ async function testFfmpeg() {
 module.exports = {
   generateThumbnail,
   extractVideoMetadata,
+  extractMetadataFromRemote,
+  extractVideoMetadataUnified,
   extractThumbnailFromRemote,
   createPlaceholderThumbnail,
   testFfmpeg

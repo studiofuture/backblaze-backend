@@ -380,7 +380,8 @@ async function completeMultipartUpload(uploadId, b2FileId, totalParts, originalF
       const ffmpegService = require('../services/ffmpeg');
       logger.info(`📊 Extracting metadata from: ${videoUrl}`);
       
-      videoMetadata = await ffmpegService.extractVideoMetadata(videoUrl);
+      // Use the unified function that handles both local and remote files
+      videoMetadata = await ffmpegService.extractVideoMetadataUnified(videoUrl);
       logger.info(`✅ Extracted video metadata:`, videoMetadata);
       
       // Generate thumbnail
