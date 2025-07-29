@@ -155,7 +155,8 @@ function updateUploadStatus(uploadId, status) {
         logger.debug(`📡 Emitted status update for ${uploadId}:`, {
           status: sanitizedStatus.status || 'unknown',
           progress: sanitizedStatus.progress || 0,
-          method: sanitizedStatus.uploadMethod || 'unknown'
+          method: sanitizedStatus.uploadMethod || 'unknown',
+          hasMetadata: !!sanitizedStatus.metadata
         });
       } catch (error) {
         logger.error(`❌ Failed to emit status update for ${uploadId}:`, error);
@@ -238,9 +239,10 @@ function completeUploadStatus(uploadId, data = {}) {
     const sanitizedData = sanitizeStatusInput(data);
     
     // Always ensure these critical flags are set for a complete state
+    // CRITICAL FIX: Spread sanitizedData AFTER currentStatus to ensure all data (including metadata) is preserved
     const status = {
       ...currentStatus,
-      ...sanitizedData,
+      ...sanitizedData, // This ensures metadata and all other fields from data are included
       status: 'complete',
       progress: 100,
       stage: 'complete',
@@ -254,44 +256,46 @@ function completeUploadStatus(uploadId, data = {}) {
     
     // Enhanced logging based on upload method
     const uploadMethod = status.uploadMethod;
-    if (uploadMethod === 'direct_multipart' || uploadMethod === 'multipart') {
-      logger.info(`🎉 Multipart upload completed: ${uploadId}`, {
-        partsUploaded: sanitizedData.partsUploaded || 'unknown',
-        videoUrl: sanitizedData.videoUrl ? '✅' : '❌',
-        backgroundTask: sanitizedData.backgroundTask ? '✅' : '❌'
-      });
-    } else {
-      logger.info(`✅ Upload completed: ${uploadId} (method: ${uploadMethod || 'unknown'})`);
-    }
+    logger.info(`✅ Upload completed: ${uploadId} (method: ${uploadMethod || 'unknown'})`, {
+      hasMetadata: !!status.metadata,
+      metadataDuration: status.metadata?.duration || 'none',
+      videoUrl: status.videoUrl ? '✅' : '❌',
+      thumbnailUrl: status.thumbnailUrl ? '✅' : '❌'
+    });
     
     if (io) {
       try {
         const statusToEmit = createEmissionSafeStatus(status);
         
+        // Log what we're emitting to debug
+        logger.debug(`📡 Emitting completion status for ${uploadId}:`, {
+          hasMetadata: !!statusToEmit.metadata,
+          metadataFields: statusToEmit.metadata ? Object.keys(statusToEmit.metadata) : [],
+          status: statusToEmit.status
+        });
+        
         // Emit multiple times with increasing delays to ensure delivery for important completion events
         io.to(uploadId).emit('status', statusToEmit);
         
-        // Second emit after 500ms for multipart uploads (more critical)
-        if (uploadMethod === 'direct_multipart' || uploadMethod === 'multipart') {
-          setTimeout(() => {
-            try {
-              io.to(uploadId).emit('status', statusToEmit);
-              logger.debug(`📡 Re-emitted multipart completion status for ${uploadId} (500ms)`);
-              
-              // Third emit after 2 seconds for extra reliability
-              setTimeout(() => {
-                try {
-                  io.to(uploadId).emit('status', statusToEmit);
-                  logger.debug(`📡 Re-emitted multipart completion status for ${uploadId} (2s)`);
-                } catch (thirdError) {
-                  logger.error(`❌ Failed on third completion emit for ${uploadId}:`, thirdError);
-                }
-              }, 1500);
-            } catch (secondError) {
-              logger.error(`❌ Failed on second completion emit for ${uploadId}:`, secondError);
-            }
-          }, 500);
-        }
+        // Second emit after 500ms for all uploads (to ensure metadata delivery)
+        setTimeout(() => {
+          try {
+            io.to(uploadId).emit('status', statusToEmit);
+            logger.debug(`📡 Re-emitted completion status for ${uploadId} (500ms)`);
+            
+            // Third emit after 2 seconds for extra reliability
+            setTimeout(() => {
+              try {
+                io.to(uploadId).emit('status', statusToEmit);
+                logger.debug(`📡 Re-emitted completion status for ${uploadId} (2s)`);
+              } catch (thirdError) {
+                logger.error(`❌ Failed on third completion emit for ${uploadId}:`, thirdError);
+              }
+            }, 1500);
+          } catch (secondError) {
+            logger.error(`❌ Failed on second completion emit for ${uploadId}:`, secondError);
+          }
+        }, 500);
         
       } catch (error) {
         logger.error(`❌ Failed to emit completion status for ${uploadId}:`, error);
@@ -508,11 +512,12 @@ function sanitizeStatusInput(input) {
   const sanitized = {};
   
   // Allow only specific fields and sanitize them
+  // IMPORTANT: Added more fields to ensure all upload data is preserved
   const allowedFields = [
     'status', 'progress', 'stage', 'uploadMethod', 'fileName', 'fileSize',
     'videoId', 'b2FileId', 'estimatedParts', 'partsUploaded', 'videoUrl',
     'thumbnailUrl', 'backgroundTask', 'publishReady', 'completedAt',
-    'errorDetails', 'uploadComplete', 'metadata'
+    'errorDetails', 'uploadComplete', 'metadata', 'fileSizeMB'
   ];
   
   allowedFields.forEach(field => {
@@ -535,7 +540,7 @@ function sanitizeStatusInput(input) {
         } else {
           // Limit object size and depth
           const limited = {};
-          const keys = Object.keys(value).slice(0, 20);
+          const keys = Object.keys(value).slice(0, 50); // Increased limit for metadata
           keys.forEach(key => {
             if (typeof value[key] === 'string') {
               limited[key] = String(value[key]).slice(0, 1000);
@@ -543,6 +548,20 @@ function sanitizeStatusInput(input) {
               limited[key] = Number(value[key]);
             } else if (typeof value[key] === 'boolean') {
               limited[key] = Boolean(value[key]);
+            } else if (value[key] && typeof value[key] === 'object' && !Array.isArray(value[key])) {
+              // Handle nested objects (like metadata)
+              const nestedLimited = {};
+              const nestedKeys = Object.keys(value[key]).slice(0, 20);
+              nestedKeys.forEach(nestedKey => {
+                if (typeof value[key][nestedKey] === 'string') {
+                  nestedLimited[nestedKey] = String(value[key][nestedKey]).slice(0, 500);
+                } else if (typeof value[key][nestedKey] === 'number') {
+                  nestedLimited[nestedKey] = Number(value[key][nestedKey]);
+                } else if (typeof value[key][nestedKey] === 'boolean') {
+                  nestedLimited[nestedKey] = Boolean(value[key][nestedKey]);
+                }
+              });
+              limited[key] = nestedLimited;
             }
           });
           value = limited;
@@ -587,15 +606,17 @@ function sanitizeErrorForStatus(error) {
 function createEmissionSafeStatus(status) {
   if (!status) return null;
   
+  // IMPORTANT: Preserve metadata in the emission
   return {
     ...status,
-    // Remove all sensitive information
+    // Remove ONLY sensitive information (NOT metadata)
     authorizationToken: undefined,
     clientIP: undefined,
     userAgent: undefined,
     internalNotes: undefined,
     serverTimestamp: Date.now(),
     isMultipart: status.uploadMethod === 'direct_multipart' || status.uploadMethod === 'multipart'
+    // metadata is preserved by the spread operator
   };
 }
 
