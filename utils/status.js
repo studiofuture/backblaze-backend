@@ -524,6 +524,23 @@ function sanitizeStatusInput(input) {
     if (input.hasOwnProperty(field)) {
       let value = input[field];
       
+      // Special handling for metadata object - preserve all fields with proper types
+      if (field === 'metadata' && value && typeof value === 'object' && !Array.isArray(value)) {
+        // Preserve metadata structure completely - this is critical for frontend
+        sanitized[field] = {
+          duration: typeof value.duration === 'number' ? parseFloat(value.duration) : (parseFloat(value.duration) || 0),
+          width: typeof value.width === 'number' ? parseInt(value.width) : (parseInt(value.width) || 0),
+          height: typeof value.height === 'number' ? parseInt(value.height) : (parseInt(value.height) || 0),
+          codec: typeof value.codec === 'string' ? String(value.codec).slice(0, 100) : String(value.codec || ''),
+          bitrate: typeof value.bitrate === 'number' ? parseInt(value.bitrate) : (parseInt(value.bitrate) || 0),
+          size: typeof value.size === 'number' ? parseInt(value.size) : (parseInt(value.size) || 0),
+          // Preserve optional fields if they exist
+          thumbnailUrl: value.thumbnailUrl ? String(value.thumbnailUrl).slice(0, 500) : undefined,
+          videoUrl: value.videoUrl ? String(value.videoUrl).slice(0, 500) : undefined
+        };
+        return; // Skip the general sanitization for metadata
+      }
+      
       if (typeof value === 'string') {
         // Sanitize strings
         value = value.trim().slice(0, 2000); // Limit length
@@ -549,7 +566,7 @@ function sanitizeStatusInput(input) {
             } else if (typeof value[key] === 'boolean') {
               limited[key] = Boolean(value[key]);
             } else if (value[key] && typeof value[key] === 'object' && !Array.isArray(value[key])) {
-              // Handle nested objects (like metadata)
+              // Handle nested objects (but not metadata - that's handled above)
               const nestedLimited = {};
               const nestedKeys = Object.keys(value[key]).slice(0, 20);
               nestedKeys.forEach(nestedKey => {

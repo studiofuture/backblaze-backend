@@ -358,6 +358,18 @@ try {
 }
 
 // =============================================================================
+// SWAGGER DOCUMENTATION ROUTES
+// =============================================================================
+try {
+  const swaggerRoutes = require('./routes/swagger');
+  app.use('/swagger', swaggerRoutes);
+  console.log('✅ Swagger documentation routes loaded successfully');
+  console.log('📚 API Documentation available at: /swagger');
+} catch (error) {
+  console.log('📝 Swagger routes not found (optional)');
+}
+
+// =============================================================================
 // BACKGROUND QUEUE MONITORING ROUTES (secured)
 // =============================================================================
 if (FEATURE_FLAGS.backgroundProcessing) {
@@ -709,27 +721,57 @@ async function initializeServer() {
     
     // Start server
     const port = process.env.PORT || 3000;
+    const env = (process.env.NODE_ENV || 'development').toUpperCase();
+    const baseUrl = `http://localhost:${port}`;
+    const apiBase = `${baseUrl}/upload`;
+    const apiDocs = `${baseUrl}/swagger`;
+    
     server.listen(port, '0.0.0.0', () => {
-      console.log(`🚀 RVSHES BACKEND SERVER STARTED SUCCESSFULLY`);
-      console.log(`🔥 Port: ${port}`);
-      console.log(`🔥 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🔥 Architecture: Enhanced Secure Hybrid Upload System`);
-      console.log(`🔥 Security Features:`);
-      console.log(`   • Rate Limiting: ✅ Enabled (Global + Endpoint Specific)`);
-      console.log(`   • CORS Filtering: ✅ Enabled (Origin Validation)`);
-      console.log(`   • Input Validation: ✅ Enabled (Sanitization + Size Limits)`);
-      console.log(`   • Security Headers: ✅ Enabled (Helmet)`);
-      console.log(`   • Socket Security: ✅ Enabled (Connection Limiting)`);
-      console.log(`🔥 Upload Methods:`);
-      console.log(`   • FormData: ${FEATURE_FLAGS.formdataUploads ? '✅ Enabled' : '❌ Disabled'}`);
-      console.log(`   • Legacy Chunked: ${FEATURE_FLAGS.legacyChunkedUploads ? '✅ Enabled' : '❌ Disabled'}`);
-      console.log(`   • Direct B2 Multipart: ${FEATURE_FLAGS.multipartUploads ? '✅ Enabled' : '❌ Disabled'}`);
-      console.log(`   • Custom Thumbnails: ✅ Enabled`);
-      console.log(`🔥 Background Processing: ${FEATURE_FLAGS.backgroundProcessing ? '✅ Enabled' : '❌ Disabled'}`);
-      console.log(`🔥 Memory Usage: Optimized (25MB chunks max)`);
-      console.log(`🔥 Socket.IO: Enhanced with security and multipart support`);
-      console.log(`🔥 Max File Size: 100GB`);
-      console.log(`🔥 READY FOR SECURE UPLOADS!`);
+      // Clear console for clean startup
+      console.clear();
+      
+      // Format strings with proper padding (total width: 59 chars inside box)
+      const formatLine = (label, value) => {
+        const line = `║  ➜ ${label.padEnd(12)} ${value.padEnd(43)}║`;
+        return line;
+      };
+      
+      // Create formatted startup box
+      console.log('');
+      console.log('╔═══════════════════════════════════════════════════════════════╗');
+      console.log('║                    🚀 SERVER STARTED 🚀                       ║');
+      console.log('╠═══════════════════════════════════════════════════════════════╣');
+      console.log(formatLine('Local:', baseUrl));
+      console.log(formatLine('API Base:', apiBase));
+      console.log(formatLine('API Docs:', apiDocs));
+      console.log(`║  ➜ Environment:  ${env.padEnd(43)}║`);
+      console.log('╠═══════════════════════════════════════════════════════════════╣');
+      console.log('║  🔒 Security Features:                                        ║');
+      console.log('║     • Rate Limiting: ✅ Enabled                               ║');
+      console.log('║     • CORS Filtering: ✅ Enabled                              ║');
+      console.log('║     • Input Validation: ✅ Enabled                            ║');
+      console.log('║     • Security Headers: ✅ Enabled                            ║');
+      console.log('║     • Socket Security: ✅ Enabled                              ║');
+      console.log('╠═══════════════════════════════════════════════════════════════╣');
+      console.log('║  📤 Upload Methods:                                           ║');
+      const formDataStatus = FEATURE_FLAGS.formdataUploads ? '✅ Enabled' : '❌ Disabled';
+      const chunkedStatus = FEATURE_FLAGS.legacyChunkedUploads ? '✅ Enabled' : '❌ Disabled';
+      const multipartStatus = FEATURE_FLAGS.multipartUploads ? '✅ Enabled' : '❌ Disabled';
+      const bgProcessingStatus = FEATURE_FLAGS.backgroundProcessing ? '✅ Enabled' : '❌ Disabled';
+      console.log(`║     • FormData: ${formDataStatus.padEnd(47)}║`);
+      console.log(`║     • Legacy Chunked: ${chunkedStatus.padEnd(44)}║`);
+      console.log(`║     • Direct B2 Multipart: ${multipartStatus.padEnd(40)}║`);
+      console.log('║     • Custom Thumbnails: ✅ Enabled                           ║');
+      console.log('╠═══════════════════════════════════════════════════════════════╣');
+      console.log('║  ⚙️  Configuration:                                           ║');
+      console.log(`║     • Background Processing: ${bgProcessingStatus.padEnd(40)}║`);
+      console.log('║     • Memory Usage: Optimized (25MB chunks max)               ║');
+      console.log('║     • Max File Size: 100GB                                    ║');
+      console.log('║     • Socket.IO: Enhanced with security                        ║');
+      console.log('╚═══════════════════════════════════════════════════════════════╝');
+      console.log('');
+      console.log('✅ READY FOR SECURE UPLOADS!');
+      console.log('');
     });
   } catch (error) {
     console.error('❌ Server initialization failed:', error.message);

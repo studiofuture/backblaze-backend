@@ -123,22 +123,46 @@ router.post('/video', generalRateLimit, validateUploadInput, async (req, res) =>
     const result = await formdataHandler.handleFormDataUpload(req, uploadId);
     
     console.log(`✅ FormData upload completed: ${uploadId}`);
+    console.log(`📊 Result metadata:`, JSON.stringify(result.metadata, null, 2));
+    
+    // Ensure metadata is properly structured with all required fields
+    const metadata = result.metadata && typeof result.metadata === 'object' && 
+                     (result.metadata.duration !== undefined || result.metadata.width !== undefined) 
+                     ? {
+                         duration: parseFloat(result.metadata.duration) || 0,
+                         width: parseInt(result.metadata.width) || 0,
+                         height: parseInt(result.metadata.height) || 0,
+                         codec: String(result.metadata.codec || ''),
+                         bitrate: parseInt(result.metadata.bitrate) || 0,
+                         size: parseInt(result.metadata.size) || 0,
+                         thumbnailUrl: result.thumbnailUrl || null,
+                         videoUrl: result.videoUrl || null
+                       }
+                     : {
+                         duration: 0,
+                         width: 0,
+                         height: 0,
+                         codec: '',
+                         bitrate: 0,
+                         size: 0,
+                         thumbnailUrl: result.thumbnailUrl || null,
+                         videoUrl: result.videoUrl || null
+                       };
+    
+    console.log(`📊 Final metadata being sent:`, JSON.stringify(metadata, null, 2));
+    
     res.json({
       status: "success",
       uploadId,
       message: "Upload completed successfully",
       url: result.videoUrl,
-      // Include metadata in response
-      metadata: result.metadata || {
-        duration: 0,
-        width: 0,
-        height: 0,
-        codec: '',
-        bitrate: 0,
-        size: 0
-      },
+      videoUrl: result.videoUrl,
       thumbnailUrl: result.thumbnailUrl || null,
-      ...result
+      metadata: metadata,
+      // Include other result fields
+      uploadComplete: result.uploadComplete,
+      publishReady: result.publishReady,
+      fileSizeMB: result.fileSizeMB
     });
     
   } catch (error) {
@@ -268,12 +292,45 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
     const result = await uploadProcessor.processVideo(uploadId, finalFilePath, sanitizedFilename, sanitizedVideoId);
     
     console.log(`✅ Chunked upload processing completed: ${uploadId}`);
+    console.log(`📊 Result metadata:`, JSON.stringify(result.metadata, null, 2));
+    
+    // Ensure metadata is properly structured with all required fields
+    const metadata = result.metadata && typeof result.metadata === 'object' && 
+                     (result.metadata.duration !== undefined || result.metadata.width !== undefined) 
+                     ? {
+                         duration: parseFloat(result.metadata.duration) || 0,
+                         width: parseInt(result.metadata.width) || 0,
+                         height: parseInt(result.metadata.height) || 0,
+                         codec: String(result.metadata.codec || ''),
+                         bitrate: parseInt(result.metadata.bitrate) || 0,
+                         size: parseInt(result.metadata.size) || 0,
+                         thumbnailUrl: result.thumbnailUrl || null,
+                         videoUrl: result.videoUrl || null
+                       }
+                     : {
+                         duration: 0,
+                         width: 0,
+                         height: 0,
+                         codec: '',
+                         bitrate: 0,
+                         size: 0,
+                         thumbnailUrl: result.thumbnailUrl || null,
+                         videoUrl: result.videoUrl || null
+                       };
+    
+    console.log(`📊 Final metadata being sent:`, JSON.stringify(metadata, null, 2));
+    
     res.json({
       status: "success",
       uploadId,
       message: "Chunked upload completed successfully",
       url: result.videoUrl,
-      ...result
+      videoUrl: result.videoUrl,
+      thumbnailUrl: result.thumbnailUrl || null,
+      metadata: metadata,
+      uploadComplete: result.uploadComplete,
+      publishReady: result.publishReady,
+      fileSizeMB: result.fileSizeMB
     });
     
   } catch (error) {
@@ -575,6 +632,33 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
     );
     
     console.log(`✅ B2 upload finalized with metadata: ${result.videoUrl}`);
+    console.log(`📊 Result metadata:`, JSON.stringify(result.metadata, null, 2));
+    
+    // Ensure metadata is properly structured with all required fields
+    const metadata = result.metadata && typeof result.metadata === 'object' && 
+                     (result.metadata.duration !== undefined || result.metadata.width !== undefined) 
+                     ? {
+                         duration: parseFloat(result.metadata.duration) || 0,
+                         width: parseInt(result.metadata.width) || 0,
+                         height: parseInt(result.metadata.height) || 0,
+                         codec: String(result.metadata.codec || ''),
+                         bitrate: parseInt(result.metadata.bitrate) || 0,
+                         size: parseInt(result.metadata.size) || 0,
+                         thumbnailUrl: result.thumbnailUrl || null,
+                         videoUrl: result.videoUrl || null
+                       }
+                     : {
+                         duration: 0,
+                         width: 0,
+                         height: 0,
+                         codec: '',
+                         bitrate: 0,
+                         size: 0,
+                         thumbnailUrl: result.thumbnailUrl || null,
+                         videoUrl: result.videoUrl || null
+                       };
+    
+    console.log(`📊 Final metadata being sent:`, JSON.stringify(metadata, null, 2));
     
     // Mark upload as complete with all data
     completeUploadStatus(sanitizedUploadId, {
@@ -585,7 +669,7 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
       publishReady: true,
       completedAt: new Date().toISOString(),
       fileSize: result.fileSize,
-      metadata: result.metadata,
+      metadata: metadata, // Use the properly structured metadata
       thumbnailUrl: result.thumbnailUrl
     });
     
@@ -600,8 +684,8 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
       partsUploaded: sanitizedTotalParts,
       fileSize: result.fileSize,
       publishReady: true,
-      // Include metadata in response for frontend
-      metadata: result.metadata,
+      // Include metadata in response for frontend - use the properly structured metadata
+      metadata: metadata,
       thumbnailUrl: result.thumbnailUrl,
       message: 'Upload completed successfully with metadata extracted'
     });
