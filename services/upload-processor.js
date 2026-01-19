@@ -37,11 +37,18 @@ async function processVideo(uploadId, tempFilePath, originalName, videoId) {
       videoMetadata = await ffmpegService.extractVideoMetadataUnified(tempFilePath);
       console.log(`✅ Metadata extracted for ${uploadId}:`, {
         duration: videoMetadata.duration,
+        width: videoMetadata.width,
+        height: videoMetadata.height,
+        codec: videoMetadata.codec,
+        bitrate: videoMetadata.bitrate,
+        size: videoMetadata.size,
         dimensions: `${videoMetadata.width}x${videoMetadata.height}`,
-        size: `${Math.floor(videoMetadata.size / 1024 / 1024)}MB`
+        sizeMB: `${Math.floor(videoMetadata.size / 1024 / 1024)}MB`
       });
+      console.log(`📊 Full metadata object:`, JSON.stringify(videoMetadata, null, 2));
     } catch (metadataError) {
       console.warn(`⚠️ Metadata extraction failed: ${metadataError.message}`);
+      console.warn(`⚠️ Stack trace:`, metadataError.stack);
       videoMetadata = { duration: 0, width: 0, height: 0, size: 0, codec: '', bitrate: 0 };
     }
 
@@ -118,17 +125,33 @@ async function processVideo(uploadId, tempFilePath, originalName, videoId) {
     }
     
     // Step 5: Complete with full data (no database update from server)
+    // Ensure metadata includes videoUrl and thumbnailUrl as expected by frontend
+    const metadata = videoMetadata ? {
+      duration: parseFloat(videoMetadata.duration) || 0,
+      width: parseInt(videoMetadata.width) || 0,
+      height: parseInt(videoMetadata.height) || 0,
+      codec: String(videoMetadata.codec || ''),
+      bitrate: parseInt(videoMetadata.bitrate) || 0,
+      size: parseInt(videoMetadata.size) || 0,
+      thumbnailUrl: thumbnailUrl || null,
+      videoUrl: videoUrl || null
+    } : {
+      duration: 0,
+      width: 0,
+      height: 0,
+      codec: '',
+      bitrate: 0,
+      size: 0,
+      thumbnailUrl: thumbnailUrl || null,
+      videoUrl: videoUrl || null
+    };
+    
+    console.log(`📊 Final metadata structure:`, JSON.stringify(metadata, null, 2));
+    
     const finalData = {
       videoUrl,
       thumbnailUrl: thumbnailUrl,
-      metadata: videoMetadata || {
-        duration: 0,
-        width: 0,
-        height: 0,
-        codec: '',
-        bitrate: 0,
-        size: 0
-      },
+      metadata: metadata,
       uploadComplete: true,
       publishReady: true,
       completedAt: new Date().toISOString(),

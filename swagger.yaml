@@ -1,0 +1,898 @@
+openapi: 3.0.3
+info:
+  title: Backblaze Backend API
+  description: |
+    Video hosting platform backend with Backblaze B2 storage, Supabase database, 
+    and real-time upload progress tracking via Socket.io.
+    
+    ## Features
+    - Multiple upload methods (FormData, Chunked, Multipart)
+    - Automatic video metadata extraction (duration, resolution, codec, bitrate)
+    - Thumbnail generation
+    - Real-time progress tracking via Socket.io
+    - Backblaze B2 cloud storage integration
+    - Supabase PostgreSQL database integration
+    
+    ## Recent Fixes
+    - ✅ Fixed metadata flow - frontend now receives complete metadata with actual values
+    - ✅ Enhanced metadata sanitization to preserve all fields
+    - ✅ Added comprehensive logging for debugging
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+  license:
+    name: ISC
+    url: https://opensource.org/licenses/ISC
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+  - url: https://your-production-domain.com
+    description: Production server
+
+tags:
+  - name: Upload
+    description: Video upload endpoints
+  - name: Status
+    description: Upload status and monitoring
+  - name: Thumbnail
+    description: Thumbnail generation and upload
+  - name: Video
+    description: Video management endpoints
+  - name: Health
+    description: Health check and system status
+
+paths:
+  /:
+    get:
+      tags:
+        - Health
+      summary: Root endpoint
+      description: Returns server information and status
+      responses:
+        '200':
+          description: Server information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  port:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  env:
+                    type: string
+                  status:
+                    type: string
+                  security:
+                    type: object
+                  features:
+                    type: object
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Returns server health status and system information
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /upload/video:
+    post:
+      tags:
+        - Upload
+      summary: FormData video upload
+      description: |
+        Upload a video file using FormData. The server will:
+        1. Receive the video file
+        2. Extract metadata (duration, resolution, codec, bitrate, size)
+        3. Generate a thumbnail
+        4. Upload video and thumbnail to Backblaze B2
+        5. Return complete metadata in the response
+        
+        **Metadata is extracted synchronously before the response is sent.**
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - video
+              properties:
+                video:
+                  type: string
+                  format: binary
+                  description: Video file (MP4, MOV, AVI, MKV, etc.)
+                videoId:
+                  type: string
+                  description: Optional video ID for database reference
+      responses:
+        '200':
+          description: Upload completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /upload/multipart/initialize:
+    post:
+      tags:
+        - Upload
+      summary: Initialize multipart upload
+      description: |
+        Initialize a streaming proxy multipart upload. Returns upload ID and B2 file ID.
+        Client should then upload chunks via `/upload/multipart/stream-chunk` and
+        complete via `/upload/multipart/complete`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - fileName
+                - fileSize
+              properties:
+                fileName:
+                  type: string
+                  example: video.mp4
+                fileSize:
+                  type: integer
+                  description: File size in bytes
+                  example: 104857600
+                contentType:
+                  type: string
+                  default: video/mp4
+                  example: video/mp4
+                videoId:
+                  type: string
+                  description: Optional video ID for database reference
+                chunkSize:
+                  type: integer
+                  description: "Chunk size in bytes (default: 25MB)"
+                  default: 26214400
+      responses:
+        '200':
+          description: Upload initialized successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultipartInitResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /upload/multipart/stream-chunk:
+    post:
+      tags:
+        - Upload
+      summary: Stream chunk to B2
+      description: |
+        Stream a chunk directly to Backblaze B2. Server acts as a proxy,
+        minimizing memory usage.
+      parameters:
+        - name: x-upload-id
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Upload ID from initialize response
+        - name: x-b2-file-id
+          in: header
+          required: true
+          schema:
+            type: string
+          description: B2 file ID from initialize response
+        - name: x-part-number
+          in: header
+          required: true
+          schema:
+            type: integer
+          description: Part number (1-based)
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Chunk uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  uploadId:
+                    type: string
+                  partNumber:
+                    type: integer
+                  sha1:
+                    type: string
+                  size:
+                    type: integer
+                  message:
+                    type: string
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /upload/multipart/complete:
+    post:
+      tags:
+        - Upload
+      summary: Complete multipart upload
+      description: |
+        Complete the multipart upload. Server will:
+        1. Finalize the B2 upload
+        2. Extract metadata from the uploaded video (synchronously)
+        3. Generate a thumbnail
+        4. Upload thumbnail to B2
+        5. Return complete metadata in the response
+        
+        **Metadata is extracted synchronously before the response is sent.**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - uploadId
+                - b2FileId
+                - totalParts
+                - originalFileName
+              properties:
+                uploadId:
+                  type: string
+                  description: Upload ID from initialize response
+                b2FileId:
+                  type: string
+                  description: B2 file ID from initialize response
+                totalParts:
+                  type: integer
+                  description: Total number of parts uploaded
+                originalFileName:
+                  type: string
+                  description: Original filename
+                videoId:
+                  type: string
+                  description: Optional video ID for database reference
+      responses:
+        '200':
+          description: Upload completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultipartCompleteResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /upload/multipart/cancel:
+    post:
+      tags:
+        - Upload
+      summary: Cancel multipart upload
+      description: Cancel an in-progress multipart upload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - uploadId
+                - b2FileId
+              properties:
+                uploadId:
+                  type: string
+                b2FileId:
+                  type: string
+      responses:
+        '200':
+          description: Upload cancelled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  uploadId:
+                    type: string
+                  message:
+                    type: string
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /upload/chunk:
+    post:
+      tags:
+        - Upload
+      summary: Upload chunk (legacy)
+      description: Upload a single chunk for legacy chunked uploads
+      parameters:
+        - name: x-upload-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-chunk-index
+          in: header
+          required: true
+          schema:
+            type: integer
+        - name: x-total-chunks
+          in: header
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Chunk received successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  chunkIndex:
+                    type: integer
+                  message:
+                    type: string
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /upload/complete-chunks:
+    post:
+      tags:
+        - Upload
+      summary: Complete chunked upload (legacy)
+      description: |
+        Assemble chunks and process video. Returns complete metadata.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - uploadId
+                - totalChunks
+                - originalFilename
+              properties:
+                uploadId:
+                  type: string
+                totalChunks:
+                  type: integer
+                originalFilename:
+                  type: string
+                videoId:
+                  type: string
+      responses:
+        '200':
+          description: Upload completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /upload/status/{uploadId}:
+    get:
+      tags:
+        - Status
+      summary: Get upload status
+      description: Get the current status of an upload
+      parameters:
+        - name: uploadId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Upload ID
+      responses:
+        '200':
+          description: Upload status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadStatus'
+        '404':
+          description: Upload not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /upload/health:
+    get:
+      tags:
+        - Health
+      summary: Upload service health
+      description: Get upload service health and feature status
+      responses:
+        '200':
+          description: Service health information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  service:
+                    type: string
+                  memory:
+                    type: object
+                  timestamp:
+                    type: string
+                    format: date-time
+                  features:
+                    type: object
+
+  /upload/generate-thumbnail:
+    post:
+      tags:
+        - Thumbnail
+      summary: Generate thumbnail from video URL
+      description: Generate a thumbnail from an existing video URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - videoUrl
+              properties:
+                videoUrl:
+                  type: string
+                  format: uri
+                  description: URL of the video
+                seekTime:
+                  type: number
+                  default: 5
+                  description: Time position for thumbnail (seconds)
+      responses:
+        '200':
+          description: Thumbnail generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  thumbnailUrl:
+                    type: string
+                    format: uri
+                  message:
+                    type: string
+                  seekTime:
+                    type: number
+                  originalVideo:
+                    type: string
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /upload/thumbnail:
+    post:
+      tags:
+        - Thumbnail
+      summary: Upload custom thumbnail
+      description: Upload a custom thumbnail image (JPEG, PNG, WebP)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - thumbnail
+              properties:
+                thumbnail:
+                  type: string
+                  format: binary
+                  description: Image file (JPEG, PNG, WebP)
+                videoId:
+                  type: string
+                  description: Optional video ID for database update
+      responses:
+        '200':
+          description: Thumbnail uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  url:
+                    type: string
+                    format: uri
+                  thumbnailUrl:
+                    type: string
+                    format: uri
+                  message:
+                    type: string
+                  uploadId:
+                    type: string
+                  videoId:
+                    type: string
+                  fileSize:
+                    type: integer
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    Metadata:
+      type: object
+      description: Video metadata extracted by FFmpeg
+      required:
+        - duration
+        - width
+        - height
+        - codec
+        - bitrate
+        - size
+      properties:
+        duration:
+          type: number
+          format: float
+          description: Video duration in seconds
+          example: 245.973333
+        width:
+          type: integer
+          description: Video width in pixels
+          example: 1920
+        height:
+          type: integer
+          description: Video height in pixels
+          example: 1080
+        codec:
+          type: string
+          description: Video codec name
+          example: h264
+        bitrate:
+          type: integer
+          description: Bitrate in bits per second
+          example: 8500000
+        size:
+          type: integer
+          description: File size in bytes
+          example: 21592737
+        thumbnailUrl:
+          type: string
+          format: uri
+          description: Generated thumbnail URL
+          nullable: true
+        videoUrl:
+          type: string
+          format: uri
+          description: Final video storage URL
+          nullable: true
+
+    UploadResponse:
+      type: object
+      description: Response from FormData or chunked upload
+      properties:
+        status:
+          type: string
+          example: success
+        uploadId:
+          type: string
+          example: upload_1234567890_abc123
+        message:
+          type: string
+          example: Upload completed successfully
+        url:
+          type: string
+          format: uri
+          description: Video URL (deprecated, use videoUrl)
+        videoUrl:
+          type: string
+          format: uri
+          description: Final video storage URL
+        thumbnailUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: Generated thumbnail URL
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        uploadComplete:
+          type: boolean
+          example: true
+        publishReady:
+          type: boolean
+          example: true
+        fileSizeMB:
+          type: integer
+          description: File size in megabytes
+          example: 20
+
+    MultipartInitResponse:
+      type: object
+      description: Response from multipart upload initialization
+      properties:
+        success:
+          type: boolean
+          example: true
+        uploadId:
+          type: string
+          example: multipart_1234567890_abc123
+        b2FileId:
+          type: string
+          description: Backblaze B2 file ID
+        fileName:
+          type: string
+          description: Generated unique filename
+        estimatedParts:
+          type: integer
+          description: Estimated number of parts
+        maxPartSize:
+          type: integer
+          description: Maximum part size in bytes (5GB)
+        message:
+          type: string
+        instructions:
+          type: object
+          properties:
+            step1:
+              type: string
+            step2:
+              type: string
+            step3:
+              type: string
+            step4:
+              type: string
+
+    MultipartCompleteResponse:
+      type: object
+      description: Response from multipart upload completion
+      properties:
+        success:
+          type: boolean
+          example: true
+        uploadId:
+          type: string
+        videoUrl:
+          type: string
+          format: uri
+          description: Final video storage URL
+        fileName:
+          type: string
+          description: Final filename
+        partsUploaded:
+          type: integer
+          description: Number of parts uploaded
+        fileSize:
+          type: integer
+          description: File size in bytes
+        publishReady:
+          type: boolean
+          example: true
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        thumbnailUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: Generated thumbnail URL
+        message:
+          type: string
+          example: Upload completed successfully with metadata extracted
+
+    UploadStatus:
+      type: object
+      description: Current upload status
+      properties:
+        status:
+          type: string
+          enum:
+            - preparing
+            - receiving
+            - processing
+            - uploading
+            - extracting_metadata
+            - generating_thumbnail
+            - finalizing
+            - complete
+            - error
+          example: complete
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Upload progress percentage
+          example: 100
+        stage:
+          type: string
+          description: Current stage description
+          example: complete
+        uploadMethod:
+          type: string
+          enum:
+            - formdata
+            - chunked
+            - streaming_proxy
+            - direct_multipart
+          example: streaming_proxy
+        videoUrl:
+          type: string
+          format: uri
+          nullable: true
+        thumbnailUrl:
+          type: string
+          format: uri
+          nullable: true
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+          nullable: true
+        uploadComplete:
+          type: boolean
+          example: true
+        publishReady:
+          type: boolean
+          example: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        error:
+          type: string
+          nullable: true
+          description: Error message if status is 'error'
+        errorDetails:
+          type: object
+          nullable: true
+
+    HealthStatus:
+      type: object
+      description: Server health status
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        uptime:
+          type: number
+          description: Server uptime in seconds
+        memory:
+          type: object
+          properties:
+            rss:
+              type: string
+              example: 256MB
+            heapUsed:
+              type: string
+              example: 128MB
+            heapTotal:
+              type: string
+              example: 256MB
+        port:
+          type: string
+        features:
+          type: object
+        security:
+          type: object
+        backgroundProcessor:
+          type: string
+          enum:
+            - active
+            - inactive
+
+    Error:
+      type: object
+      description: Error response
+      properties:
+        error:
+          type: string
+          description: Error message
+        details:
+          type: string
+          description: Additional error details
+        uploadId:
+          type: string
+          nullable: true
+        message:
+          type: string
+          nullable: true
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: API key for authentication (if implemented)
+

@@ -382,7 +382,17 @@ async function completeMultipartUpload(uploadId, b2FileId, totalParts, originalF
       
       // Use the unified function that handles both local and remote files
       videoMetadata = await ffmpegService.extractVideoMetadataUnified(videoUrl);
-      logger.info(`✅ Extracted video metadata:`, videoMetadata);
+      logger.info(`✅ Extracted video metadata:`, {
+        duration: videoMetadata.duration,
+        width: videoMetadata.width,
+        height: videoMetadata.height,
+        codec: videoMetadata.codec,
+        bitrate: videoMetadata.bitrate,
+        size: videoMetadata.size,
+        dimensions: `${videoMetadata.width}x${videoMetadata.height}`,
+        sizeMB: `${Math.floor(videoMetadata.size / 1024 / 1024)}MB`
+      });
+      logger.info(`📊 Full metadata object:`, JSON.stringify(videoMetadata, null, 2));
       
       // Generate thumbnail
       updateUploadStatus(uploadId, {
@@ -420,6 +430,29 @@ async function completeMultipartUpload(uploadId, b2FileId, totalParts, originalF
     
     memoryMonitor.logMemoryUsage(`After streaming proxy completion ${uploadId}`);
     
+    // Ensure metadata includes videoUrl and thumbnailUrl as expected by frontend
+    const metadata = videoMetadata ? {
+      duration: parseFloat(videoMetadata.duration) || 0,
+      width: parseInt(videoMetadata.width) || 0,
+      height: parseInt(videoMetadata.height) || 0,
+      codec: String(videoMetadata.codec || ''),
+      bitrate: parseInt(videoMetadata.bitrate) || 0,
+      size: parseInt(videoMetadata.size) || 0,
+      thumbnailUrl: thumbnailUrl || null,
+      videoUrl: videoUrl || null
+    } : {
+      duration: 0,
+      width: 0,
+      height: 0,
+      codec: '',
+      bitrate: 0,
+      size: 0,
+      thumbnailUrl: thumbnailUrl || null,
+      videoUrl: videoUrl || null
+    };
+    
+    logger.info(`📊 Final metadata structure:`, JSON.stringify(metadata, null, 2));
+    
     // Return ALL data including metadata
     return {
       success: true,
@@ -428,15 +461,8 @@ async function completeMultipartUpload(uploadId, b2FileId, totalParts, originalF
       uploadId: uploadId,
       fileSize: finishResponse.data.contentLength,
       totalParts: totalParts,
-      // Include metadata in response
-      metadata: videoMetadata || {
-        duration: 0,
-        width: 0,
-        height: 0,
-        codec: '',
-        bitrate: 0,
-        size: 0
-      },
+      // Include metadata in response with proper structure
+      metadata: metadata,
       thumbnailUrl: thumbnailUrl || null
     };
     
