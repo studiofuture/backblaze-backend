@@ -7,8 +7,8 @@ const logger = require('../utils/logger');
 function corsMiddleware(req, res, next) {
   // Define allowed origins - UPDATED to include lovable.dev
   const allowedOrigins = [
-    "https://www.rvshes.com",
-    "https://rvshes.com",
+    "https://www.rushes.cc",
+    "https://rushes.cc",
     "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
     "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
     "https://lovable.dev", // ADD THIS LINE
