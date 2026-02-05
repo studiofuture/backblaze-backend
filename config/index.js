@@ -312,11 +312,11 @@ function validateEnvironment() {
     logger.warn('âš ï¸ B2_APPLICATION_KEY appears too short');
   }
   
-  // Validate bucket IDs format (25 characters)
+  // Validate bucket IDs format (24 characters)
   ['B2_VIDEO_BUCKET_ID', 'B2_THUMBNAIL_BUCKET_ID', 'B2_PROFILE_BUCKET_ID', 'B2_SUBTITLE_BUCKET_ID'].forEach(bucketVar => {
     const bucketId = process.env[bucketVar];
-    if (bucketId && bucketId.length !== 25) {
-      logger.warn(`⚠️ ${bucketVar} format appears invalid (should be 25 characters, got ${bucketId.length})`);
+    if (bucketId && bucketId.length !== 24) {
+      logger.warn(`⚠️ ${bucketVar} format appears invalid (should be 24 characters, got ${bucketId.length})`);
     }
   });
   
