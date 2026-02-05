@@ -20,6 +20,10 @@ const config = {
       profile: {
         id: process.env.B2_PROFILE_BUCKET_ID,
         name: process.env.B2_PROFILE_BUCKET_NAME || 'rushes-profile-pics'
+      },
+      subtitle: {
+        id: process.env.B2_SUBTITLE_BUCKET_ID,
+        name: process.env.B2_SUBTITLE_BUCKET_NAME || 'rushes-subtitles'
       }
     }
   },
@@ -199,7 +203,8 @@ const requiredEnvVars = [
   'B2_APPLICATION_KEY',
   'B2_VIDEO_BUCKET_ID',
   'B2_THUMBNAIL_BUCKET_ID',
-  'B2_PROFILE_BUCKET_ID'
+  'B2_PROFILE_BUCKET_ID',
+  'B2_SUBTITLE_BUCKET_ID'
 ];
 
 // Optional environment variables with warnings
@@ -208,7 +213,8 @@ const optionalEnvVars = [
   'SUPABASE_SERVICE_ROLE_KEY',
   'B2_VIDEO_BUCKET_NAME',
   'B2_THUMBNAIL_BUCKET_NAME',
-  'B2_PROFILE_BUCKET_NAME'
+  'B2_PROFILE_BUCKET_NAME',
+  'B2_SUBTITLE_BUCKET_NAME'
 ];
 
 /**
@@ -292,54 +298,56 @@ function getEnvironmentOverrides() {
  * Validate environment variables with enhanced security checks
  */
 function validateEnvironment() {
-  logger.info('🔍 Starting environment validation...');
+  logger.info('ðŸ” Starting environment validation...');
   
   // Check for required variables
   const missing = requiredEnvVars.filter(varName => !process.env[varName]);
   
   // Validate B2 credentials format (basic check)
   if (process.env.B2_ACCOUNT_ID && !/^[a-fA-F0-9]{12}$/.test(process.env.B2_ACCOUNT_ID)) {
-    logger.warn('⚠️ B2_ACCOUNT_ID format appears invalid (should be 12 hex characters)');
+    logger.warn('âš ï¸ B2_ACCOUNT_ID format appears invalid (should be 12 hex characters)');
   }
   
   if (process.env.B2_APPLICATION_KEY && process.env.B2_APPLICATION_KEY.length < 20) {
-    logger.warn('⚠️ B2_APPLICATION_KEY appears too short');
+    logger.warn('âš ï¸ B2_APPLICATION_KEY appears too short');
   }
   
-  // Validate bucket IDs format
-  ['B2_VIDEO_BUCKET_ID', 'B2_THUMBNAIL_BUCKET_ID', 'B2_PROFILE_BUCKET_ID'].forEach(bucketVar => {
+  // Validate bucket IDs format (25 characters)
+  ['B2_VIDEO_BUCKET_ID', 'B2_THUMBNAIL_BUCKET_ID', 'B2_PROFILE_BUCKET_ID', 'B2_SUBTITLE_BUCKET_ID'].forEach(bucketVar => {
     const bucketId = process.env[bucketVar];
-    if (bucketId && !/^[a-fA-F0-9]{24}$/.test(bucketId)) {
-      logger.warn(`⚠️ ${bucketVar} format appears invalid (should be 24 hex characters)`);
+    if (bucketId && bucketId.length !== 25) {
+      logger.warn(`⚠️ ${bucketVar} format appears invalid (should be 25 characters, got ${bucketId.length})`);
     }
   });
   
   // Log all environment variables status
-  logger.info('📊 Environment variables status:', {
-    accountId: process.env.B2_ACCOUNT_ID ? '✅ Set' : '❌ Missing',
-    applicationKey: process.env.B2_APPLICATION_KEY ? '✅ Set' : '❌ Missing',
-    videoBucketId: process.env.B2_VIDEO_BUCKET_ID ? '✅ Set' : '❌ Missing',
-    videoBucketName: process.env.B2_VIDEO_BUCKET_NAME || '❌ Missing (using default)',
-    thumbnailBucketId: process.env.B2_THUMBNAIL_BUCKET_ID ? '✅ Set' : '❌ Missing',
-    thumbnailBucketName: process.env.B2_THUMBNAIL_BUCKET_NAME || '❌ Missing (using default)',
-    profileBucketId: process.env.B2_PROFILE_BUCKET_ID ? '✅ Set' : '❌ Missing',
-    profileBucketName: process.env.B2_PROFILE_BUCKET_NAME || '❌ Missing (using default)',
-    supabaseUrl: process.env.SUPABASE_URL ? '✅ Set' : '⚠️ Optional - Missing',
-    supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Set' : '⚠️ Optional - Missing'
+  logger.info('ðŸ“Š Environment variables status:', {
+    accountId: process.env.B2_ACCOUNT_ID ? 'âœ… Set' : 'âŒ Missing',
+    applicationKey: process.env.B2_APPLICATION_KEY ? 'âœ… Set' : 'âŒ Missing',
+    videoBucketId: process.env.B2_VIDEO_BUCKET_ID ? 'âœ… Set' : 'âŒ Missing',
+    videoBucketName: process.env.B2_VIDEO_BUCKET_NAME || 'âŒ Missing (using default)',
+    thumbnailBucketId: process.env.B2_THUMBNAIL_BUCKET_ID ? 'âœ… Set' : 'âŒ Missing',
+    thumbnailBucketName: process.env.B2_THUMBNAIL_BUCKET_NAME || 'âŒ Missing (using default)',
+    profileBucketId: process.env.B2_PROFILE_BUCKET_ID ? 'âœ… Set' : 'âŒ Missing',
+    profileBucketName: process.env.B2_PROFILE_BUCKET_NAME || 'âŒ Missing (using default)',
+    subtitleBucketId: process.env.B2_SUBTITLE_BUCKET_ID ? 'âœ… Set' : 'âŒ Missing',
+    subtitleBucketName: process.env.B2_SUBTITLE_BUCKET_NAME || 'âŒ Missing (using default)',
+    supabaseUrl: process.env.SUPABASE_URL ? 'âœ… Set' : 'âš ï¸ Optional - Missing',
+    supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'âœ… Set' : 'âš ï¸ Optional - Missing'
   });
 
   // Security configuration summary
-  logger.info('🔒 Security configuration:', {
-    rateLimiting: config.security.rateLimiting.enabled ? '✅ Enabled' : '❌ Disabled',
-    corsStrictMode: config.security.cors.strictMode ? '✅ Enabled' : '⚠️ Permissive',
-    trustProxy: config.security.trustProxy ? '✅ Enabled' : '❌ Disabled',
+  logger.info('ðŸ”’ Security configuration:', {
+    rateLimiting: config.security.rateLimiting.enabled ? 'âœ… Enabled' : 'âŒ Disabled',
+    corsStrictMode: config.security.cors.strictMode ? 'âœ… Enabled' : 'âš ï¸ Permissive',
+    trustProxy: config.security.trustProxy ? 'âœ… Enabled' : 'âŒ Disabled',
     allowedOrigins: config.security.cors.allowedOrigins ? config.security.cors.allowedOrigins.length : 0,
     maxFileSize: `${Math.floor(config.upload.maxFileSize / 1024 / 1024 / 1024)}GB`,
     maxConcurrentUploads: config.upload.maxConcurrentChunks
   });
 
   // Upload configuration summary
-  logger.info('⬆️ Upload configuration:', {
+  logger.info('â¬†ï¸ Upload configuration:', {
     maxFileSize: `${Math.floor(config.upload.maxFileSize / 1024 / 1024 / 1024)}GB`,
     chunkSize: `${Math.floor(config.upload.chunkSize / 1024 / 1024)}MB`,
     concurrentChunks: config.upload.maxConcurrentChunks,
@@ -349,21 +357,21 @@ function validateEnvironment() {
   });
 
   // Feature flags summary
-  logger.info('🎛️ Feature flags:', {
-    formdataUploads: config.features.formdataUploads ? '✅' : '❌',
-    legacyChunked: config.features.legacyChunkedUploads ? '✅' : '❌',
-    multipartUploads: config.features.multipartUploads ? '✅' : '❌',
-    backgroundProcessing: config.features.backgroundProcessing ? '✅' : '❌',
-    customThumbnails: config.features.customThumbnails ? '✅' : '❌'
+  logger.info('ðŸŽ›ï¸ Feature flags:', {
+    formdataUploads: config.features.formdataUploads ? 'âœ…' : 'âŒ',
+    legacyChunked: config.features.legacyChunkedUploads ? 'âœ…' : 'âŒ',
+    multipartUploads: config.features.multipartUploads ? 'âœ…' : 'âŒ',
+    backgroundProcessing: config.features.backgroundProcessing ? 'âœ…' : 'âŒ',
+    customThumbnails: config.features.customThumbnails ? 'âœ…' : 'âŒ'
   });
 
   // Show warnings for missing optional variables
   optionalEnvVars.forEach(varName => {
     if (!process.env[varName]) {
       if (varName.startsWith('SUPABASE_')) {
-        logger.warn(`⚠️ WARNING: ${varName} is not set. Database features will be limited.`);
+        logger.warn(`âš ï¸ WARNING: ${varName} is not set. Database features will be limited.`);
       } else if (varName.includes('BUCKET_NAME')) {
-        logger.warn(`⚠️ WARNING: ${varName} is not set. Using default bucket name.`);
+        logger.warn(`âš ï¸ WARNING: ${varName} is not set. Using default bucket name.`);
       }
     }
   });
@@ -378,57 +386,57 @@ function validateEnvironment() {
 
   Object.entries(numericVars).forEach(([varName, value]) => {
     if (value && isNaN(parseInt(value))) {
-      logger.warn(`⚠️ WARNING: ${varName} is not a valid number: ${value}`);
+      logger.warn(`âš ï¸ WARNING: ${varName} is not a valid number: ${value}`);
     }
   });
 
   // Security validation warnings with defensive checks
   if (process.env.NODE_ENV === 'production') {
     if (config.security.cors.strictMode === false) {
-      logger.warn('⚠️ SECURITY: CORS strict mode is disabled in production');
+      logger.warn('âš ï¸ SECURITY: CORS strict mode is disabled in production');
     }
     
     if (config.security.rateLimiting.enabled === false) {
-      logger.warn('⚠️ SECURITY: Rate limiting is disabled in production');
+      logger.warn('âš ï¸ SECURITY: Rate limiting is disabled in production');
     }
     
     if (config.features.debugRoutes === true) {
-      logger.warn('⚠️ SECURITY: Debug routes are enabled in production');
+      logger.warn('âš ï¸ SECURITY: Debug routes are enabled in production');
     }
     
     // FIXED: Add defensive check for allowedOrigins
     if (!config.security.cors.allowedOrigins || !Array.isArray(config.security.cors.allowedOrigins)) {
-      logger.error('❌ SECURITY: CORS allowedOrigins is not properly configured');
+      logger.error('âŒ SECURITY: CORS allowedOrigins is not properly configured');
     } else if (config.security.cors.allowedOrigins.length === 0) {
-      logger.warn('⚠️ SECURITY: No CORS origins configured');
+      logger.warn('âš ï¸ SECURITY: No CORS origins configured');
     }
   }
 
   // Hard fail if critical variables are missing
   if (missing.length > 0) {
-    logger.error(`❌ Missing required environment variables: ${missing.join(', ')}`);
-    logger.error('📝 Please add these variables to your .env file');
-    logger.error('🔗 See .env.example for required format');
+    logger.error(`âŒ Missing required environment variables: ${missing.join(', ')}`);
+    logger.error('ðŸ“ Please add these variables to your .env file');
+    logger.error('ðŸ”— See .env.example for required format');
     process.exit(1);
   }
 
   // Validate file size limits
   if (config.upload.maxFileSize > 500 * 1024 * 1024 * 1024) {
-    logger.warn('⚠️ WARNING: Max file size exceeds recommended limit of 500GB');
+    logger.warn('âš ï¸ WARNING: Max file size exceeds recommended limit of 500GB');
   }
 
   // Validate memory settings
   if (config.memory.warningThreshold >= config.memory.criticalThreshold) {
-    logger.warn('⚠️ WARNING: Memory warning threshold should be less than critical threshold');
+    logger.warn('âš ï¸ WARNING: Memory warning threshold should be less than critical threshold');
   }
 
   // Validate multipart settings
   if (config.multipart.enabled && config.multipart.maxPartsPerUpload > 10000) {
-    logger.warn('⚠️ WARNING: Multipart max parts exceeds B2 limit of 10,000');
+    logger.warn('âš ï¸ WARNING: Multipart max parts exceeds B2 limit of 10,000');
     config.multipart.maxPartsPerUpload = 10000;
   }
 
-  logger.info('✅ Environment validation completed successfully');
+  logger.info('âœ… Environment validation completed successfully');
 }
 
 /**
@@ -489,8 +497,8 @@ function validateConfig() {
   }
   
   // Log warnings and errors
-  warnings.forEach(warning => logger.warn(`⚠️ CONFIG: ${warning}`));
-  errors.forEach(error => logger.error(`❌ CONFIG: ${error}`));
+  warnings.forEach(warning => logger.warn(`âš ï¸ CONFIG: ${warning}`));
+  errors.forEach(error => logger.error(`âŒ CONFIG: ${error}`));
   
   if (errors.length > 0) {
     throw new Error(`Configuration validation failed: ${errors.join(', ')}`);

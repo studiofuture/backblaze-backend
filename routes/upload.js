@@ -99,9 +99,9 @@ const sanitizeInput = (data) => {
 };
 
 // DEBUG: Check logger configuration
-console.log('🔧 DEBUG: LOG_LEVEL =', process.env.LOG_LEVEL);
-console.log('🔧 DEBUG: NODE_ENV =', process.env.NODE_ENV);
-console.log('🔧 DEBUG: MULTIPART_UPLOADS =', ENABLE_MULTIPART_UPLOADS);
+console.log('ðŸ”§ DEBUG: LOG_LEVEL =', process.env.LOG_LEVEL);
+console.log('ðŸ”§ DEBUG: NODE_ENV =', process.env.NODE_ENV);
+console.log('ðŸ”§ DEBUG: MULTIPART_UPLOADS =', ENABLE_MULTIPART_UPLOADS);
 
 // ============================================================================
 // EXISTING FUNCTIONALITY - PRESERVED UNCHANGED
@@ -117,13 +117,13 @@ router.post('/video', generalRateLimit, validateUploadInput, async (req, res) =>
   
   try {
     uploadId = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    console.log(`🚀 FormData upload started: ${uploadId}`);
+    console.log(`ðŸš€ FormData upload started: ${uploadId}`);
     
     // Process upload using FormData handler service
     const result = await formdataHandler.handleFormDataUpload(req, uploadId);
     
-    console.log(`✅ FormData upload completed: ${uploadId}`);
-    console.log(`📊 Result metadata:`, JSON.stringify(result.metadata, null, 2));
+    console.log(`âœ… FormData upload completed: ${uploadId}`);
+    console.log(`ðŸ“Š Result metadata:`, JSON.stringify(result.metadata, null, 2));
     
     // Ensure metadata is properly structured with all required fields
     const metadata = result.metadata && typeof result.metadata === 'object' && 
@@ -149,7 +149,7 @@ router.post('/video', generalRateLimit, validateUploadInput, async (req, res) =>
                          videoUrl: result.videoUrl || null
                        };
     
-    console.log(`📊 Final metadata being sent:`, JSON.stringify(metadata, null, 2));
+    console.log(`ðŸ“Š Final metadata being sent:`, JSON.stringify(metadata, null, 2));
     
     res.json({
       status: "success",
@@ -166,7 +166,7 @@ router.post('/video', generalRateLimit, validateUploadInput, async (req, res) =>
     });
     
   } catch (error) {
-    console.error(`❌ FormData upload failed: ${error.message}`);
+    console.error(`âŒ FormData upload failed: ${error.message}`);
     
     if (uploadId) {
       failUploadStatus(uploadId, error);
@@ -190,7 +190,7 @@ router.post('/chunk', moderateRateLimit, validateUploadInput, async (req, res) =
     const chunkIndex = parseInt(sanitizeInput(req.headers['x-chunk-index']));
     const totalChunks = parseInt(sanitizeInput(req.headers['x-total-chunks']));
     
-    console.log(`📦 Receiving chunk ${chunkIndex}/${totalChunks} for upload ${uploadId}`);
+    console.log(`ðŸ“¦ Receiving chunk ${chunkIndex}/${totalChunks} for upload ${uploadId}`);
     
     // Validate headers
     if (!uploadId || chunkIndex === undefined || !totalChunks) {
@@ -209,7 +209,7 @@ router.post('/chunk', moderateRateLimit, validateUploadInput, async (req, res) =
     // Process chunk using chunk assembler service
     await chunkAssembler.saveChunk(req, uploadId, chunkIndex, totalChunks);
     
-    console.log(`✅ Chunk ${chunkIndex} saved successfully`);
+    console.log(`âœ… Chunk ${chunkIndex} saved successfully`);
     res.json({
       success: true,
       chunkIndex,
@@ -217,7 +217,7 @@ router.post('/chunk', moderateRateLimit, validateUploadInput, async (req, res) =
     });
     
   } catch (error) {
-    console.error(`❌ Chunk upload error:`, error);
+    console.error(`âŒ Chunk upload error:`, error);
     res.status(500).json({
       error: 'Chunk upload failed',
       details: error.message
@@ -234,7 +234,7 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
   let uploadId;
   
   try {
-    console.log('📋 Complete chunks request body:', req.body);
+    console.log('ðŸ“‹ Complete chunks request body:', req.body);
     
     const { 
       uploadId: reqUploadId, 
@@ -249,7 +249,7 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
     const sanitizedFilename = sanitizeInput(originalFilename);
     const sanitizedVideoId = sanitizeInput(videoId);
     
-    console.log('📋 Extracted fields:', {
+    console.log('ðŸ“‹ Extracted fields:', {
       uploadId,
       totalChunks: sanitizedTotalChunks,
       originalFilename: sanitizedFilename,
@@ -275,7 +275,7 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
       });
     }
     
-    console.log(`🔄 Starting chunk assembly for upload ${uploadId}`);
+    console.log(`ðŸ”„ Starting chunk assembly for upload ${uploadId}`);
     
     // Initialize processing status
     initUploadStatus(uploadId, {
@@ -286,13 +286,13 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
     
     // Assemble chunks using chunk assembler service
     const finalFilePath = await chunkAssembler.assembleChunks(uploadId, sanitizedTotalChunks, sanitizedFilename);
-    console.log(`✅ Chunks assembled into: ${finalFilePath}`);
+    console.log(`âœ… Chunks assembled into: ${finalFilePath}`);
     
     // Process the assembled file using upload processor service
     const result = await uploadProcessor.processVideo(uploadId, finalFilePath, sanitizedFilename, sanitizedVideoId);
     
-    console.log(`✅ Chunked upload processing completed: ${uploadId}`);
-    console.log(`📊 Result metadata:`, JSON.stringify(result.metadata, null, 2));
+    console.log(`âœ… Chunked upload processing completed: ${uploadId}`);
+    console.log(`ðŸ“Š Result metadata:`, JSON.stringify(result.metadata, null, 2));
     
     // Ensure metadata is properly structured with all required fields
     const metadata = result.metadata && typeof result.metadata === 'object' && 
@@ -318,7 +318,7 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
                          videoUrl: result.videoUrl || null
                        };
     
-    console.log(`📊 Final metadata being sent:`, JSON.stringify(metadata, null, 2));
+    console.log(`ðŸ“Š Final metadata being sent:`, JSON.stringify(metadata, null, 2));
     
     res.json({
       status: "success",
@@ -334,7 +334,7 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
     });
     
   } catch (error) {
-    console.error(`❌ Complete chunks processing failed:`, error);
+    console.error(`âŒ Complete chunks processing failed:`, error);
     
     if (uploadId) {
       failUploadStatus(uploadId, error);
@@ -406,7 +406,7 @@ router.post('/multipart/initialize', strictRateLimit, validateUploadInput, async
     // Generate unique upload ID with more entropy
     uploadId = `multipart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${Math.random().toString(36).substr(2, 9)}`;
     
-    console.log(`🚀 Initializing streaming proxy multipart upload: ${uploadId} for ${sanitizedFileName} (${Math.floor(sanitizedFileSize / 1024 / 1024)}MB)`);
+    console.log(`ðŸš€ Initializing streaming proxy multipart upload: ${uploadId} for ${sanitizedFileName} (${Math.floor(sanitizedFileSize / 1024 / 1024)}MB)`);
     
     // Initialize upload status tracking
     initUploadStatus(uploadId, {
@@ -443,7 +443,7 @@ router.post('/multipart/initialize', strictRateLimit, validateUploadInput, async
       estimatedParts: estimatedParts
     });
     
-    console.log(`✅ Streaming proxy multipart upload initialized: ${uploadId}`);
+    console.log(`âœ… Streaming proxy multipart upload initialized: ${uploadId}`);
     
     res.json({
       success: true,
@@ -463,7 +463,7 @@ router.post('/multipart/initialize', strictRateLimit, validateUploadInput, async
     });
     
   } catch (error) {
-    console.error(`❌ Failed to initialize streaming proxy multipart upload:`, error);
+    console.error(`âŒ Failed to initialize streaming proxy multipart upload:`, error);
     
     if (uploadId) {
       failUploadStatus(uploadId, error);
@@ -503,7 +503,7 @@ router.post('/multipart/stream-chunk', moderateRateLimit, validateUploadInput, a
       });
     }
     
-    console.log(`📤 Streaming chunk ${partNumber} to B2 for ${uploadId}`);
+    console.log(`ðŸ“¤ Streaming chunk ${partNumber} to B2 for ${uploadId}`);
     
     // Validate upload exists and is in correct state
     const uploadStatus = getUploadStatus(uploadId);
@@ -535,7 +535,7 @@ router.post('/multipart/stream-chunk', moderateRateLimit, validateUploadInput, a
       { clientIP: req.ip }
     );
     
-    console.log(`✅ Successfully streamed chunk ${partNumber} to B2`);
+    console.log(`âœ… Successfully streamed chunk ${partNumber} to B2`);
     
     res.json({
       success: true,
@@ -547,7 +547,7 @@ router.post('/multipart/stream-chunk', moderateRateLimit, validateUploadInput, a
     });
     
   } catch (error) {
-    console.error(`❌ Failed to stream chunk to B2:`, error);
+    console.error(`âŒ Failed to stream chunk to B2:`, error);
     
     res.status(500).json({
       error: 'Failed to stream chunk to B2',
@@ -593,7 +593,7 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
       });
     }
     
-    console.log(`🏁 Completing streaming proxy multipart upload ${sanitizedUploadId} with ${sanitizedTotalParts} parts`);
+    console.log(`ðŸ Completing streaming proxy multipart upload ${sanitizedUploadId} with ${sanitizedTotalParts} parts`);
     
     // Validate upload exists and is in correct state
     const uploadStatus = getUploadStatus(sanitizedUploadId);
@@ -631,8 +631,8 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
       { clientIP: req.ip }
     );
     
-    console.log(`✅ B2 upload finalized with metadata: ${result.videoUrl}`);
-    console.log(`📊 Result metadata:`, JSON.stringify(result.metadata, null, 2));
+    console.log(`âœ… B2 upload finalized with metadata: ${result.videoUrl}`);
+    console.log(`ðŸ“Š Result metadata:`, JSON.stringify(result.metadata, null, 2));
     
     // Ensure metadata is properly structured with all required fields
     const metadata = result.metadata && typeof result.metadata === 'object' && 
@@ -658,7 +658,7 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
                          videoUrl: result.videoUrl || null
                        };
     
-    console.log(`📊 Final metadata being sent:`, JSON.stringify(metadata, null, 2));
+    console.log(`ðŸ“Š Final metadata being sent:`, JSON.stringify(metadata, null, 2));
     
     // Mark upload as complete with all data
     completeUploadStatus(sanitizedUploadId, {
@@ -673,7 +673,7 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
       thumbnailUrl: result.thumbnailUrl
     });
     
-    console.log(`🎉 Streaming proxy multipart upload completed successfully: ${sanitizedUploadId}`);
+    console.log(`ðŸŽ‰ Streaming proxy multipart upload completed successfully: ${sanitizedUploadId}`);
     
     // Return response with metadata
     res.json({
@@ -691,7 +691,7 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
     });
     
   } catch (error) {
-    console.error(`❌ Failed to complete streaming proxy multipart upload:`, error);
+    console.error(`âŒ Failed to complete streaming proxy multipart upload:`, error);
     
     const { uploadId } = req.body;
     if (uploadId) {
@@ -725,7 +725,7 @@ router.post('/multipart/cancel', moderateRateLimit, async (req, res) => {
       });
     }
     
-    console.log(`🛑 Cancelling streaming proxy multipart upload ${sanitizedUploadId}`);
+    console.log(`ðŸ›‘ Cancelling streaming proxy multipart upload ${sanitizedUploadId}`);
     
     // Cancel the B2 multipart upload
     const cancelled = await multipartUploader.cancelMultipartUpload(
@@ -735,7 +735,7 @@ router.post('/multipart/cancel', moderateRateLimit, async (req, res) => {
     );
     
     if (cancelled) {
-      console.log(`✅ Successfully cancelled upload ${sanitizedUploadId}`);
+      console.log(`âœ… Successfully cancelled upload ${sanitizedUploadId}`);
       
       res.json({
         success: true,
@@ -750,7 +750,7 @@ router.post('/multipart/cancel', moderateRateLimit, async (req, res) => {
     }
     
   } catch (error) {
-    console.error(`❌ Failed to cancel streaming proxy multipart upload:`, error);
+    console.error(`âŒ Failed to cancel streaming proxy multipart upload:`, error);
     
     res.status(500).json({
       error: 'Failed to cancel upload',
@@ -776,7 +776,7 @@ router.post('/generate-thumbnail', moderateRateLimit, async (req, res) => {
     const sanitizedVideoUrl = sanitizeInput(videoUrl);
     const sanitizedSeekTime = Math.max(0, Math.min(sanitizeInput(seekTime), 3600)); // Max 1 hour
     
-    console.log(`🖼️ Thumbnail generation requested for: ${sanitizedVideoUrl}`);
+    console.log(`ðŸ–¼ï¸ Thumbnail generation requested for: ${sanitizedVideoUrl}`);
     
     if (!sanitizedVideoUrl) {
       return res.status(400).json({
@@ -806,16 +806,16 @@ router.post('/generate-thumbnail', moderateRateLimit, async (req, res) => {
     
     // Generate thumbnail from remote video URL
     await ffmpegService.extractThumbnailFromRemote(sanitizedVideoUrl, thumbnailPath, sanitizedSeekTime);
-    console.log(`✅ Thumbnail generated from remote URL: ${thumbnailPath}`);
+    console.log(`âœ… Thumbnail generated from remote URL: ${thumbnailPath}`);
     
     // Upload thumbnail to B2
     const thumbnailUrl = await b2Service.uploadThumbnail(thumbnailPath, thumbnailFileName);
-    console.log(`✅ Thumbnail uploaded to B2: ${thumbnailUrl}`);
+    console.log(`âœ… Thumbnail uploaded to B2: ${thumbnailUrl}`);
     
     // Clean up local thumbnail
     if (fs.existsSync(thumbnailPath)) {
       fs.unlinkSync(thumbnailPath);
-      console.log(`🧹 Local thumbnail cleaned up: ${thumbnailPath}`);
+      console.log(`ðŸ§¹ Local thumbnail cleaned up: ${thumbnailPath}`);
     }
     
     res.json({
@@ -827,7 +827,7 @@ router.post('/generate-thumbnail', moderateRateLimit, async (req, res) => {
     });
     
   } catch (error) {
-    console.error(`❌ Thumbnail generation failed: ${error.message}`);
+    console.error(`âŒ Thumbnail generation failed: ${error.message}`);
     res.status(500).json({
       error: 'Thumbnail generation failed',
       details: error.message,
@@ -846,7 +846,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
 
   try {
     uploadId = `thumbnail_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    console.log(`🖼️ Custom thumbnail upload started: ${uploadId}`);
+    console.log(`ðŸ–¼ï¸ Custom thumbnail upload started: ${uploadId}`);
 
     // Directory setup
     await ensureDirectory('uploads');
@@ -873,7 +873,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
 
     // File handler with security validation
     bb.on('file', (fieldname, file, info) => {
-      console.log(`📥 Thumbnail file handler triggered:`, {
+      console.log(`ðŸ“¥ Thumbnail file handler triggered:`, {
         fieldname,
         filename: info.filename,
         mimeType: info.mimeType,
@@ -884,7 +884,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
         // Accept common field names for thumbnails
         const validFieldNames = ['thumbnail', 'image', 'file', 'upload'];
         if (!validFieldNames.includes(fieldname)) {
-          console.warn(`⚠️ Unexpected field name: ${fieldname}. Rejecting.`);
+          console.warn(`âš ï¸ Unexpected field name: ${fieldname}. Rejecting.`);
           return res.status(400).json({
             error: 'Invalid field name for thumbnail upload'
           });
@@ -895,7 +895,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
         filename = generateUniqueFilename(originalName);
         tempFilePath = getUploadPath('thumbs', filename);
 
-        console.log(`📁 Processing thumbnail: ${originalName} -> ${filename}`);
+        console.log(`ðŸ“ Processing thumbnail: ${originalName} -> ${filename}`);
 
         // Security: Image type validation
         const validImageTypes = [
@@ -904,7 +904,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
 
         if (!validImageTypes.includes(info.mimeType)) {
           const error = new Error(`Invalid image type: ${info.mimeType}. Only JPEG, PNG, and WebP images are allowed.`);
-          console.error(`❌ ${error.message}`);
+          console.error(`âŒ ${error.message}`);
           return res.status(400).json({
             error: error.message
           });
@@ -914,7 +914,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
         writeStream = fs.createWriteStream(tempFilePath);
 
         writeStream.on('error', (streamError) => {
-          console.error(`❌ Thumbnail write stream error: ${streamError.message}`);
+          console.error(`âŒ Thumbnail write stream error: ${streamError.message}`);
           res.status(500).json({
             error: 'File write error',
             uploadId
@@ -937,12 +937,12 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
         });
 
         file.on('end', () => {
-          console.log(`✅ Thumbnail file stream ended: ${Math.floor(totalBytes / 1024)}KB total`);
+          console.log(`âœ… Thumbnail file stream ended: ${Math.floor(totalBytes / 1024)}KB total`);
           writeStream.end();
         });
 
         file.on('error', (fileError) => {
-          console.error(`❌ Thumbnail file stream error: ${fileError.message}`);
+          console.error(`âŒ Thumbnail file stream error: ${fileError.message}`);
           if (writeStream && !writeStream.destroyed) {
             writeStream.destroy();
           }
@@ -953,7 +953,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
         });
 
         writeStream.on('close', async () => {
-          console.log(`✅ Thumbnail write stream closed - processing`);
+          console.log(`âœ… Thumbnail write stream closed - processing`);
 
           try {
             // Security: Verify file exists and has reasonable size
@@ -967,12 +967,12 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
 
             // Upload thumbnail directly to B2
             const thumbnailUrl = await b2Service.uploadThumbnail(tempFilePath, filename);
-            console.log(`✅ Custom thumbnail uploaded to B2: ${thumbnailUrl}`);
+            console.log(`âœ… Custom thumbnail uploaded to B2: ${thumbnailUrl}`);
 
             // Clean up local file immediately
             if (fs.existsSync(tempFilePath)) {
               fs.unlinkSync(tempFilePath);
-              console.log(`🧹 Local thumbnail cleaned up: ${tempFilePath}`);
+              console.log(`ðŸ§¹ Local thumbnail cleaned up: ${tempFilePath}`);
             }
 
             // Get video ID from form fields if provided
@@ -983,9 +983,9 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
               try {
                 const supabaseService = require('../services/supabase');
                 await supabaseService.updateThumbnail(videoId, thumbnailUrl);
-                console.log(`✅ Database updated with custom thumbnail for video ${videoId}`);
+                console.log(`âœ… Database updated with custom thumbnail for video ${videoId}`);
               } catch (dbError) {
-                console.warn(`⚠️ Database update failed: ${dbError.message}`);
+                console.warn(`âš ï¸ Database update failed: ${dbError.message}`);
                 // Continue anyway - upload was successful
               }
             }
@@ -1001,7 +1001,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
             });
 
           } catch (uploadError) {
-            console.error(`❌ Custom thumbnail upload failed: ${uploadError.message}`);
+            console.error(`âŒ Custom thumbnail upload failed: ${uploadError.message}`);
 
             // Clean up temp file on error
             if (fs.existsSync(tempFilePath)) {
@@ -1020,7 +1020,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
         file.pipe(writeStream);
 
       } catch (fileHandlerError) {
-        console.error(`❌ Thumbnail file handler error: ${fileHandlerError.message}`);
+        console.error(`âŒ Thumbnail file handler error: ${fileHandlerError.message}`);
         res.status(500).json({
           error: 'File handler error',
           uploadId
@@ -1030,12 +1030,12 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
 
     // Handle form fields with sanitization
     bb.on('field', (fieldname, value) => {
-      console.log(`📝 Thumbnail form field: ${fieldname} = ${value}`);
+      console.log(`ðŸ“ Thumbnail form field: ${fieldname} = ${value}`);
       formFields[fieldname] = sanitizeInput(value);
     });
 
     bb.on('finish', () => {
-      console.log(`🏁 Thumbnail busboy finished for ${uploadId}`);
+      console.log(`ðŸ Thumbnail busboy finished for ${uploadId}`);
 
       if (!fileReceived) {
         return res.status(400).json({
@@ -1047,14 +1047,14 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
     });
 
     bb.on('error', (error) => {
-      console.error(`❌ Thumbnail busboy error: ${error.message}`);
+      console.error(`âŒ Thumbnail busboy error: ${error.message}`);
 
       // Clean up temp file
       if (tempFilePath && fs.existsSync(tempFilePath)) {
         try {
           fs.unlinkSync(tempFilePath);
         } catch (cleanupError) {
-          console.error(`❌ Thumbnail cleanup error: ${cleanupError.message}`);
+          console.error(`âŒ Thumbnail cleanup error: ${cleanupError.message}`);
         }
       }
 
@@ -1067,7 +1067,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
 
     // Request handlers with security
     req.on('error', (error) => {
-      console.error(`❌ Thumbnail request error: ${error.message}`);
+      console.error(`âŒ Thumbnail request error: ${error.message}`);
       res.status(500).json({
         error: 'Thumbnail upload request failed',
         uploadId
@@ -1075,7 +1075,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
     });
 
     req.on('aborted', () => {
-      console.warn(`⚠️ Thumbnail request aborted for ${uploadId}`);
+      console.warn(`âš ï¸ Thumbnail request aborted for ${uploadId}`);
       if (!res.headersSent) {
         res.status(400).json({
           error: 'Thumbnail upload was cancelled',
@@ -1088,7 +1088,7 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
     req.pipe(bb);
 
   } catch (error) {
-    console.error(`❌ Custom thumbnail upload setup error: ${error.message}`);
+    console.error(`âŒ Custom thumbnail upload setup error: ${error.message}`);
     res.status(500).json({
       error: 'Thumbnail upload setup failed',
       details: error.message,
@@ -1102,6 +1102,319 @@ router.post('/thumbnail', moderateRateLimit, validateUploadInput, async (req, re
  * GET /upload/status/:uploadId
  * Returns current upload status - ENHANCED WITH SECURITY
  */
+/**
+ * SUBTITLE UPLOAD ROUTE
+ * POST /upload/subtitle
+ * Handles user-uploaded subtitle files (.srt or .vtt)
+ */
+router.post('/subtitle', moderateRateLimit, validateUploadInput, async (req, res) => {
+  let uploadId;
+  let tempFilePath;
+
+  try {
+    uploadId = `subtitle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    console.log(`📄 Subtitle upload started: ${uploadId}`);
+
+    // Directory setup
+    await ensureDirectory('uploads');
+    await ensureDirectory('uploads/subtitles');
+
+    // Busboy setup for subtitle uploads with security limits
+    const busboy = require('busboy');
+    const bb = busboy({
+      headers: req.headers,
+      limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB max for subtitles
+        files: 1,
+        fields: 10,
+        fieldSize: 1024 * 1024
+      }
+    });
+
+    let fileReceived = false;
+    let filename;
+    let originalName;
+    let writeStream;
+    let originalFormat;
+
+    // File handler with security validation
+    bb.on('file', (fieldname, file, info) => {
+      console.log(`📥 Subtitle file handler triggered:`, {
+        fieldname,
+        filename: info.filename,
+        mimeType: info.mimeType,
+        encoding: info.encoding
+      });
+
+      try {
+        // Accept 'file' field name
+        if (fieldname !== 'file') {
+          console.warn(`⚠️ Unexpected field name: ${fieldname}. Rejecting.`);
+          return res.status(400).json({
+            error: 'Invalid field name for subtitle upload. Use "file".'
+          });
+        }
+
+        fileReceived = true;
+        originalName = sanitizeInput(info.filename);
+        
+        // Validate file extension
+        const ext = path.extname(originalName).toLowerCase();
+        if (ext !== '.srt' && ext !== '.vtt') {
+          const error = new Error(`Invalid subtitle format: ${ext}. Only .srt and .vtt files are supported.`);
+          console.error(`❌ ${error.message}`);
+          return res.status(400).json({
+            error: error.message
+          });
+        }
+
+        originalFormat = ext.substring(1); // Remove the dot
+        
+        // Always save as .vtt (we'll convert SRT if needed)
+        filename = `subtitle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.vtt`;
+        tempFilePath = getUploadPath('subtitles', filename);
+
+        console.log(`📝 Processing subtitle: ${originalName} (${originalFormat}) -> ${filename}`);
+
+        // Create write stream with error handling
+        writeStream = fs.createWriteStream(tempFilePath);
+
+        writeStream.on('error', (streamError) => {
+          console.error(`❌ Subtitle write stream error: ${streamError.message}`);
+          res.status(500).json({
+            error: 'File write error',
+            uploadId
+          });
+        });
+
+        // File data handling with size monitoring
+        let totalBytes = 0;
+        file.on('data', (chunk) => {
+          totalBytes += chunk.length;
+          
+          // Security: Additional size check during upload
+          if (totalBytes > 5 * 1024 * 1024) {
+            file.destroy();
+            writeStream.destroy();
+            return res.status(413).json({
+              error: 'Subtitle file too large (max 5MB)'
+            });
+          }
+        });
+
+        file.on('end', () => {
+          console.log(`✅ Subtitle file stream ended: ${Math.floor(totalBytes / 1024)}KB total`);
+          writeStream.end();
+        });
+
+        file.on('error', (fileError) => {
+          console.error(`❌ Subtitle file stream error: ${fileError.message}`);
+          if (writeStream && !writeStream.destroyed) {
+            writeStream.destroy();
+          }
+          res.status(500).json({
+            error: 'File upload error',
+            uploadId
+          });
+        });
+
+        writeStream.on('close', async () => {
+          console.log(`✅ Subtitle write stream closed - processing`);
+
+          try {
+            // Security: Verify file exists and has reasonable size
+            const stats = fs.statSync(tempFilePath);
+            if (stats.size === 0) {
+              throw new Error('Uploaded file is empty');
+            }
+            if (stats.size > 5 * 1024 * 1024) {
+              throw new Error('Uploaded file exceeds size limit');
+            }
+
+            // Convert SRT to VTT if needed
+            let finalFilePath = tempFilePath;
+            let converted = false;
+            
+            if (originalFormat === 'srt') {
+              console.log(`🔄 Converting SRT to VTT...`);
+              
+              // Read SRT content
+              const srtContent = fs.readFileSync(tempFilePath, 'utf-8');
+              
+              // Convert to VTT
+              let vttContent = 'WEBVTT\n\n';
+              vttContent += srtContent
+                .replace(/\r\n/g, '\n')  // Normalize line endings
+                .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');  // Comma to period in timestamps
+              
+              // Write VTT content
+              fs.writeFileSync(tempFilePath, vttContent, 'utf-8');
+              converted = true;
+              
+              console.log(`✅ SRT converted to VTT`);
+            }
+
+            // Upload subtitle to B2
+            const subtitleUrl = await b2Service.uploadSubtitle(tempFilePath, filename);
+            console.log(`✅ Subtitle uploaded to B2: ${subtitleUrl}`);
+
+            // Clean up local file immediately
+            if (fs.existsSync(tempFilePath)) {
+              fs.unlinkSync(tempFilePath);
+              console.log(`🧹 Local subtitle cleaned up: ${tempFilePath}`);
+            }
+
+            res.json({
+              success: true,
+              url: subtitleUrl,
+              message: 'Subtitle uploaded successfully',
+              uploadId,
+              originalFormat,
+              converted,
+              fileSize: stats.size
+            });
+
+          } catch (uploadError) {
+            console.error(`❌ Subtitle upload failed: ${uploadError.message}`);
+
+            // Clean up temp file on error
+            if (fs.existsSync(tempFilePath)) {
+              fs.unlinkSync(tempFilePath);
+            }
+
+            res.status(500).json({
+              error: 'Subtitle upload failed',
+              details: uploadError.message,
+              uploadId
+            });
+          }
+        });
+
+        // Pipe file to write stream
+        file.pipe(writeStream);
+
+      } catch (fileHandlerError) {
+        console.error(`❌ Subtitle file handler error: ${fileHandlerError.message}`);
+        res.status(500).json({
+          error: 'File handler error',
+          uploadId
+        });
+      }
+    });
+
+    bb.on('finish', () => {
+      console.log(`🏁 Subtitle busboy finished for ${uploadId}`);
+
+      if (!fileReceived) {
+        return res.status(400).json({
+          error: 'No subtitle file was uploaded',
+          message: 'Please select a subtitle file (.srt or .vtt)',
+          uploadId
+        });
+      }
+    });
+
+    bb.on('error', (error) => {
+      console.error(`❌ Subtitle busboy error: ${error.message}`);
+
+      // Clean up temp file
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch (cleanupError) {
+          console.error(`❌ Subtitle cleanup error: ${cleanupError.message}`);
+        }
+      }
+
+      res.status(500).json({
+        error: 'Subtitle upload failed',
+        details: error.message,
+        uploadId
+      });
+    });
+
+    // Request handlers with security
+    req.on('error', (error) => {
+      console.error(`❌ Subtitle request error: ${error.message}`);
+      
+      // Clean up temp file
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch (cleanupError) {
+          console.error(`❌ Subtitle cleanup error: ${cleanupError.message}`);
+        }
+      }
+      
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'Request error',
+          uploadId
+        });
+      }
+    });
+
+    req.on('aborted', () => {
+      console.error(`❌ Subtitle request aborted: ${uploadId}`);
+      
+      // Clean up temp file
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch (cleanupError) {
+          console.error(`❌ Subtitle cleanup error: ${cleanupError.message}`);
+        }
+      }
+    });
+
+    // Security: Set timeout for upload
+    req.setTimeout(5 * 60 * 1000, () => {
+      console.error(`❌ Subtitle upload timeout: ${uploadId}`);
+      
+      if (writeStream && !writeStream.destroyed) {
+        writeStream.destroy();
+      }
+      
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch (cleanupError) {
+          console.error(`❌ Subtitle cleanup error: ${cleanupError.message}`);
+        }
+      }
+      
+      if (!res.headersSent) {
+        res.status(408).json({
+          error: 'Upload timeout',
+          message: 'Subtitle upload took too long',
+          uploadId
+        });
+      }
+    });
+
+    // Pipe request to busboy
+    req.pipe(bb);
+
+  } catch (error) {
+    console.error(`❌ Subtitle upload error: ${error.message}`);
+    
+    // Clean up temp file
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (cleanupError) {
+        console.error(`❌ Subtitle cleanup error: ${cleanupError.message}`);
+      }
+    }
+    
+    res.status(500).json({
+      error: 'Subtitle upload failed',
+      details: error.message,
+      uploadId: uploadId || 'unknown'
+    });
+  }
+});
+
 router.get('/status/:uploadId', generalRateLimit, (req, res) => {
   const uploadId = sanitizeInput(req.params.uploadId);
   
@@ -1144,7 +1457,7 @@ router.get('/status/:uploadId', generalRateLimit, (req, res) => {
     res.json(response);
     
   } catch (error) {
-    console.error(`❌ Status check error: ${error.message}`);
+    console.error(`âŒ Status check error: ${error.message}`);
     res.status(500).json({ 
       error: 'Status check failed'
     });

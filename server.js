@@ -77,12 +77,12 @@ setupSocketIO(io);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
-  console.log(`🌐 ${req.method} ${req.url} from ${origin || 'no-origin'} [IP: ${req.ip}]`);
+  console.log(`ðŸŒ ${req.method} ${req.url} from ${origin || 'no-origin'} [IP: ${req.ip}]`);
   
   // Security: Define allowed origins
   const allowedOrigins = [
-    "https://www.rushes.cc",
-    "https://rushes.cc",
+    "https://www.rvshes.com",
+    "https://rvshes.com",
     "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
     "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
     "https://lovable.dev",
@@ -104,11 +104,11 @@ app.use((req, res, next) => {
   } else if (process.env.NODE_ENV !== 'production') {
     // Development - allow all but log
     res.header('Access-Control-Allow-Origin', origin);
-    console.log(`🔧 DEV: CORS allowed for unknown origin: ${origin}`);
+    console.log(`ðŸ”§ DEV: CORS allowed for unknown origin: ${origin}`);
   } else {
     // Production - reject unknown origins for sensitive endpoints
     if (req.path.startsWith('/upload/multipart') || req.path.startsWith('/upload/chunk')) {
-      console.log(`🚫 CORS rejected for unknown origin: ${origin} on sensitive endpoint: ${req.path}`);
+      console.log(`ðŸš« CORS rejected for unknown origin: ${origin} on sensitive endpoint: ${req.path}`);
       return res.status(403).json({
         error: 'Origin not allowed',
         message: 'This origin is not authorized to make requests to this endpoint'
@@ -116,7 +116,7 @@ app.use((req, res, next) => {
     }
     // Allow for non-sensitive endpoints
     res.header('Access-Control-Allow-Origin', origin);
-    console.log(`⚠️ CORS allowed for unknown origin on non-sensitive endpoint: ${origin}`);
+    console.log(`âš ï¸ CORS allowed for unknown origin on non-sensitive endpoint: ${origin}`);
   }
   
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD');
@@ -126,7 +126,7 @@ app.use((req, res, next) => {
   
   // Handle OPTIONS preflight
   if (req.method === 'OPTIONS') {
-    console.log(`✅ OPTIONS ${req.url} - CORS preflight handled`);
+    console.log(`âœ… OPTIONS ${req.url} - CORS preflight handled`);
     return res.status(200).end();
   }
   
@@ -187,8 +187,8 @@ const FEATURE_FLAGS = {
   formdataUploads: process.env.ENABLE_FORMDATA_UPLOADS !== 'false'
 };
 
-console.log('🏁 Feature Flags:', FEATURE_FLAGS);
-console.log('🔒 Security Features: Rate Limiting, CORS Filtering, Input Validation, Helmet Headers');
+console.log('ðŸ Feature Flags:', FEATURE_FLAGS);
+console.log('ðŸ”’ Security Features: Rate Limiting, CORS Filtering, Input Validation, Helmet Headers');
 
 // =============================================================================
 // BACKGROUND PROCESSING INITIALIZATION
@@ -200,10 +200,10 @@ if (FEATURE_FLAGS.backgroundProcessing) {
   try {
     const { initializeQueue } = require('./utils/upload-queue');
     backgroundProcessor = initializeQueue();
-    console.log('✅ Background processing queue initialized');
+    console.log('âœ… Background processing queue initialized');
   } catch (error) {
-    console.error('❌ Failed to initialize background processing:', error.message);
-    console.log('📝 Background processing will be disabled');
+    console.error('âŒ Failed to initialize background processing:', error.message);
+    console.log('ðŸ“ Background processing will be disabled');
   }
 }
 
@@ -213,7 +213,7 @@ if (FEATURE_FLAGS.backgroundProcessing) {
 
 // Root route with security info
 app.get('/', (req, res) => {
-  console.log('🏠 ROOT ROUTE HIT');
+  console.log('ðŸ  ROOT ROUTE HIT');
   res.json({ 
     message: 'Rvshes Backend Server - Enhanced with Secure Direct B2 Multipart Uploads!',
     port: process.env.PORT,
@@ -312,10 +312,10 @@ app.get('/debug-routes', (req, res) => {
 try {
   const uploadRoutes = require('./routes/upload'); // This should be the secure enhanced version
   app.use('/upload', uploadRoutes);
-  console.log('✅ Enhanced secure upload routes loaded successfully');
+  console.log('âœ… Enhanced secure upload routes loaded successfully');
 } catch (error) {
-  console.error('❌ Failed to load upload routes:', error.message);
-  console.log('📝 Make sure ./routes/upload.js exists and exports properly');
+  console.error('âŒ Failed to load upload routes:', error.message);
+  console.log('ðŸ“ Make sure ./routes/upload.js exists and exports properly');
   console.error('Full error:', error);
 }
 
@@ -327,9 +327,9 @@ if (FEATURE_FLAGS.multipartUploads) {
     // Try to load standalone multipart routes if they exist
     const multipartRoutes = require('./routes/multipart-upload');
     app.use('/multipart', multipartRoutes);
-    console.log('✅ Standalone multipart upload routes loaded successfully');
+    console.log('âœ… Standalone multipart upload routes loaded successfully');
   } catch (error) {
-    console.log('📝 Standalone multipart routes not found - using integrated routes in /upload');
+    console.log('ðŸ“ Standalone multipart routes not found - using integrated routes in /upload');
   }
 }
 
@@ -340,9 +340,9 @@ if (process.env.NODE_ENV !== 'production') {
   try {
     const testRoutes = require('./routes/test');
     app.use('/test', testRoutes);
-    console.log('✅ Test routes loaded successfully (development only)');
+    console.log('âœ… Test routes loaded successfully (development only)');
   } catch (error) {
-    console.log('📝 Test routes not found (optional)');
+    console.log('ðŸ“ Test routes not found (optional)');
   }
 }
 
@@ -352,9 +352,9 @@ if (process.env.NODE_ENV !== 'production') {
 try {
   const videoRoutes = require('./routes/video');
   app.use('/video', videoRoutes);
-  console.log('✅ Video routes loaded successfully');
+  console.log('âœ… Video routes loaded successfully');
 } catch (error) {
-  console.log('📝 Video routes not found (optional)');
+  console.log('ðŸ“ Video routes not found (optional)');
 }
 
 // =============================================================================
@@ -363,10 +363,10 @@ try {
 try {
   const swaggerRoutes = require('./routes/swagger');
   app.use('/swagger', swaggerRoutes);
-  console.log('✅ Swagger documentation routes loaded successfully');
-  console.log('📚 API Documentation available at: /swagger');
+  console.log('âœ… Swagger documentation routes loaded successfully');
+  console.log('ðŸ“š API Documentation available at: /swagger');
 } catch (error) {
-  console.log('📝 Swagger routes not found (optional)');
+  console.log('ðŸ“ Swagger routes not found (optional)');
 }
 
 // =============================================================================
@@ -484,7 +484,7 @@ io.use((socket, next) => {
   const recentConnections = connections.filter(time => now - time < 60000); // Last minute
   
   if (recentConnections.length > 10) { // Max 10 connections per minute per IP
-    console.log(`🚫 Socket connection rate limited for IP: ${ip}`);
+    console.log(`ðŸš« Socket connection rate limited for IP: ${ip}`);
     return next(new Error('Too many connections'));
   }
   
@@ -499,24 +499,24 @@ io.on('connection', (socket) => {
   const origin = socket.handshake.headers.origin;
   const ip = socket.handshake.address;
   
-  console.log(`🔌 SECURE CLIENT CONNECTED: ${clientId} from ${origin || 'unknown'} [IP: ${ip}]`);
+  console.log(`ðŸ”Œ SECURE CLIENT CONNECTED: ${clientId} from ${origin || 'unknown'} [IP: ${ip}]`);
   
   socket.on('subscribe', (uploadId) => {
     // Security: Validate uploadId
     if (!uploadId || typeof uploadId !== 'string' || uploadId.length > 100 || !/^[a-zA-Z0-9_-]+$/.test(uploadId)) {
-      console.log(`❌ Invalid uploadId from ${clientId}: ${uploadId}`);
+      console.log(`âŒ Invalid uploadId from ${clientId}: ${uploadId}`);
       socket.emit('error', { message: 'Invalid upload ID' });
       return;
     }
     
-    console.log(`📺 CLIENT SUBSCRIBED: ${clientId} to ${uploadId}`);
+    console.log(`ðŸ“º CLIENT SUBSCRIBED: ${clientId} to ${uploadId}`);
     socket.join(uploadId);
     
     // Send current status immediately
     const status = getUploadStatus(uploadId);
     if (status) {
       socket.emit('status', status);
-      console.log(`📤 Sent current status to ${clientId}:`, {
+      console.log(`ðŸ“¤ Sent current status to ${clientId}:`, {
         status: status.status,
         progress: status.progress,
         uploadMethod: status.uploadMethod || 'unknown',
@@ -531,7 +531,7 @@ io.on('connection', (socket) => {
         service: 'enhanced-secure-hybrid-upload-system',
         capabilities: FEATURE_FLAGS
       });
-      console.log(`👋 Sent welcome to ${clientId} for ${uploadId}`);
+      console.log(`ðŸ‘‹ Sent welcome to ${clientId} for ${uploadId}`);
     }
   });
   
@@ -539,7 +539,7 @@ io.on('connection', (socket) => {
   socket.on('multipart_progress', (data) => {
     // Security: Validate progress data
     if (!data || typeof data !== 'object' || !data.uploadId || !data.partNumber || typeof data.progress !== 'number') {
-      console.log(`❌ Invalid multipart progress data from ${clientId}`);
+      console.log(`âŒ Invalid multipart progress data from ${clientId}`);
       return;
     }
     
@@ -547,11 +547,11 @@ io.on('connection', (socket) => {
     
     // Security: Additional validation
     if (uploadId.length > 100 || partNumber < 1 || partNumber > 10000 || progress < 0 || progress > 100) {
-      console.log(`❌ Invalid multipart progress values from ${clientId}`);
+      console.log(`âŒ Invalid multipart progress values from ${clientId}`);
       return;
     }
     
-    console.log(`📊 Multipart progress update: ${uploadId} part ${partNumber} - ${progress}%`);
+    console.log(`ðŸ“Š Multipart progress update: ${uploadId} part ${partNumber} - ${progress}%`);
     
     // Broadcast to other clients subscribed to this upload
     socket.to(uploadId).emit('multipart_progress', {
@@ -565,22 +565,22 @@ io.on('connection', (socket) => {
   socket.on('unsubscribe', (uploadId) => {
     // Security: Validate uploadId
     if (uploadId && typeof uploadId === 'string' && uploadId.length <= 100) {
-      console.log(`📺 CLIENT UNSUBSCRIBED: ${clientId} from ${uploadId}`);
+      console.log(`ðŸ“º CLIENT UNSUBSCRIBED: ${clientId} from ${uploadId}`);
       socket.leave(uploadId);
     }
   });
   
   socket.on('disconnect', (reason) => {
-    console.log(`🔌 CLIENT DISCONNECTED: ${clientId} - ${reason}`);
+    console.log(`ðŸ”Œ CLIENT DISCONNECTED: ${clientId} - ${reason}`);
   });
   
   socket.on('error', (error) => {
-    console.log(`❌ Socket error for ${clientId}:`, error.message || error);
+    console.log(`âŒ Socket error for ${clientId}:`, error.message || error);
   });
   
   // Security: Handle potential abuse
   socket.on('*', (event, data) => {
-    console.log(`⚠️ Unknown socket event '${event}' from ${clientId}`);
+    console.log(`âš ï¸ Unknown socket event '${event}' from ${clientId}`);
   });
 });
 
@@ -590,7 +590,7 @@ io.on('connection', (socket) => {
 
 // Security: Error handling middleware that doesn't leak information
 app.use((error, req, res, next) => {
-  console.error('❌ Unhandled error:', error);
+  console.error('âŒ Unhandled error:', error);
   
   // Preserve CORS headers
   const origin = req.headers.origin;
@@ -626,55 +626,55 @@ app.use((error, req, res, next) => {
 // =============================================================================
 
 process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM received, shutting down gracefully...');
+  console.log('ðŸ›‘ SIGTERM received, shutting down gracefully...');
   
   // Stop accepting new connections
   server.close(() => {
-    console.log('✅ HTTP server closed');
+    console.log('âœ… HTTP server closed');
     
     // Stop background processor
     if (backgroundProcessor) {
       backgroundProcessor.stop();
-      console.log('✅ Background processor stopped');
+      console.log('âœ… Background processor stopped');
     }
     
     // Close socket.io
     io.close(() => {
-      console.log('✅ Socket.io closed');
+      console.log('âœ… Socket.io closed');
       process.exit(0);
     });
   });
   
   // Force close after 30 seconds
   setTimeout(() => {
-    console.error('❌ Could not close connections in time, forcefully shutting down');
+    console.error('âŒ Could not close connections in time, forcefully shutting down');
     process.exit(1);
   }, 30000);
 });
 
 process.on('SIGINT', () => {
-  console.log('🛑 SIGINT received, shutting down gracefully...');
+  console.log('ðŸ›‘ SIGINT received, shutting down gracefully...');
   
   // Stop accepting new connections
   server.close(() => {
-    console.log('✅ HTTP server closed');
+    console.log('âœ… HTTP server closed');
     
     // Stop background processor
     if (backgroundProcessor) {
       backgroundProcessor.stop();
-      console.log('✅ Background processor stopped');
+      console.log('âœ… Background processor stopped');
     }
     
     // Close socket.io
     io.close(() => {
-      console.log('✅ Socket.io closed');
+      console.log('âœ… Socket.io closed');
       process.exit(0);
     });
   });
   
   // Force close after 30 seconds
   setTimeout(() => {
-    console.error('❌ Could not close connections in time, forcefully shutting down');
+    console.error('âŒ Could not close connections in time, forcefully shutting down');
     process.exit(1);
   }, 30000);
 });
@@ -683,7 +683,7 @@ process.on('SIGINT', () => {
 // CATCH ALL - Should be last
 // =============================================================================
 app.use('*', (req, res) => {
-  console.log(`🔍 CATCH ALL: ${req.method} ${req.originalUrl} [IP: ${req.ip}]`);
+  console.log(`ðŸ” CATCH ALL: ${req.method} ${req.originalUrl} [IP: ${req.ip}]`);
   res.status(404).json({ 
     error: 'Route not found',
     path: req.originalUrl,
@@ -701,6 +701,7 @@ app.use('*', (req, res) => {
       'POST /upload/multipart/complete (Complete multipart upload)',
       'POST /upload/multipart/cancel (Cancel multipart upload)',
       'POST /upload/thumbnail (Custom thumbnail upload)',
+      'POST /upload/subtitle (Subtitle upload .srt/.vtt)',
       'POST /upload/generate-thumbnail',
       'GET /upload/health',
       'GET /queue/status (Background processing)',
@@ -732,49 +733,49 @@ async function initializeServer() {
       
       // Format strings with proper padding (total width: 59 chars inside box)
       const formatLine = (label, value) => {
-        const line = `║  ➜ ${label.padEnd(12)} ${value.padEnd(43)}║`;
+        const line = `â•‘  âžœ ${label.padEnd(12)} ${value.padEnd(43)}â•‘`;
         return line;
       };
       
       // Create formatted startup box
       console.log('');
-      console.log('╔═══════════════════════════════════════════════════════════════╗');
-      console.log('║                    🚀 SERVER STARTED 🚀                       ║');
-      console.log('╠═══════════════════════════════════════════════════════════════╣');
+      console.log('â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—');
+      console.log('â•‘                    ðŸš€ SERVER STARTED ðŸš€                       â•‘');
+      console.log('â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£');
       console.log(formatLine('Local:', baseUrl));
       console.log(formatLine('API Base:', apiBase));
       console.log(formatLine('API Docs:', apiDocs));
-      console.log(`║  ➜ Environment:  ${env.padEnd(43)}║`);
-      console.log('╠═══════════════════════════════════════════════════════════════╣');
-      console.log('║  🔒 Security Features:                                        ║');
-      console.log('║     • Rate Limiting: ✅ Enabled                               ║');
-      console.log('║     • CORS Filtering: ✅ Enabled                              ║');
-      console.log('║     • Input Validation: ✅ Enabled                            ║');
-      console.log('║     • Security Headers: ✅ Enabled                            ║');
-      console.log('║     • Socket Security: ✅ Enabled                              ║');
-      console.log('╠═══════════════════════════════════════════════════════════════╣');
-      console.log('║  📤 Upload Methods:                                           ║');
-      const formDataStatus = FEATURE_FLAGS.formdataUploads ? '✅ Enabled' : '❌ Disabled';
-      const chunkedStatus = FEATURE_FLAGS.legacyChunkedUploads ? '✅ Enabled' : '❌ Disabled';
-      const multipartStatus = FEATURE_FLAGS.multipartUploads ? '✅ Enabled' : '❌ Disabled';
-      const bgProcessingStatus = FEATURE_FLAGS.backgroundProcessing ? '✅ Enabled' : '❌ Disabled';
-      console.log(`║     • FormData: ${formDataStatus.padEnd(47)}║`);
-      console.log(`║     • Legacy Chunked: ${chunkedStatus.padEnd(44)}║`);
-      console.log(`║     • Direct B2 Multipart: ${multipartStatus.padEnd(40)}║`);
-      console.log('║     • Custom Thumbnails: ✅ Enabled                           ║');
-      console.log('╠═══════════════════════════════════════════════════════════════╣');
-      console.log('║  ⚙️  Configuration:                                           ║');
-      console.log(`║     • Background Processing: ${bgProcessingStatus.padEnd(40)}║`);
-      console.log('║     • Memory Usage: Optimized (25MB chunks max)               ║');
-      console.log('║     • Max File Size: 100GB                                    ║');
-      console.log('║     • Socket.IO: Enhanced with security                        ║');
-      console.log('╚═══════════════════════════════════════════════════════════════╝');
+      console.log(`â•‘  âžœ Environment:  ${env.padEnd(43)}â•‘`);
+      console.log('â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£');
+      console.log('â•‘  ðŸ”’ Security Features:                                        â•‘');
+      console.log('â•‘     â€¢ Rate Limiting: âœ… Enabled                               â•‘');
+      console.log('â•‘     â€¢ CORS Filtering: âœ… Enabled                              â•‘');
+      console.log('â•‘     â€¢ Input Validation: âœ… Enabled                            â•‘');
+      console.log('â•‘     â€¢ Security Headers: âœ… Enabled                            â•‘');
+      console.log('â•‘     â€¢ Socket Security: âœ… Enabled                              â•‘');
+      console.log('â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£');
+      console.log('â•‘  ðŸ“¤ Upload Methods:                                           â•‘');
+      const formDataStatus = FEATURE_FLAGS.formdataUploads ? 'âœ… Enabled' : 'âŒ Disabled';
+      const chunkedStatus = FEATURE_FLAGS.legacyChunkedUploads ? 'âœ… Enabled' : 'âŒ Disabled';
+      const multipartStatus = FEATURE_FLAGS.multipartUploads ? 'âœ… Enabled' : 'âŒ Disabled';
+      const bgProcessingStatus = FEATURE_FLAGS.backgroundProcessing ? 'âœ… Enabled' : 'âŒ Disabled';
+      console.log(`â•‘     â€¢ FormData: ${formDataStatus.padEnd(47)}â•‘`);
+      console.log(`â•‘     â€¢ Legacy Chunked: ${chunkedStatus.padEnd(44)}â•‘`);
+      console.log(`â•‘     â€¢ Direct B2 Multipart: ${multipartStatus.padEnd(40)}â•‘`);
+      console.log('â•‘     â€¢ Custom Thumbnails: âœ… Enabled                           â•‘');
+      console.log('â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£');
+      console.log('â•‘  âš™ï¸  Configuration:                                           â•‘');
+      console.log(`â•‘     â€¢ Background Processing: ${bgProcessingStatus.padEnd(40)}â•‘`);
+      console.log('â•‘     â€¢ Memory Usage: Optimized (25MB chunks max)               â•‘');
+      console.log('â•‘     â€¢ Max File Size: 100GB                                    â•‘');
+      console.log('â•‘     â€¢ Socket.IO: Enhanced with security                        â•‘');
+      console.log('â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
       console.log('');
-      console.log('✅ READY FOR SECURE UPLOADS!');
+      console.log('âœ… READY FOR SECURE UPLOADS!');
       console.log('');
     });
   } catch (error) {
-    console.error('❌ Server initialization failed:', error.message);
+    console.error('âŒ Server initialization failed:', error.message);
     process.exit(1);
   }
 }
