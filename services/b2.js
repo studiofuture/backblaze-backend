@@ -36,7 +36,7 @@ async function uploadFileOptimized(file, uploadId, options = {}) {
     // OPTIMIZED: Use smaller chunks (25MB) for better memory management
     const chunkSize = 25 * 1024 * 1024; // 25MB chunks
     
-    logger.info(`ðŸ“Œ Starting optimized upload: ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB)`);
+    logger.info(`Ã°Å¸â€œÅ’ Starting optimized upload: ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB)`);
     memoryMonitor.logMemoryUsage(`Before B2 upload ${uploadId}`);
     
     updateUploadStatus(uploadId, { 
@@ -52,7 +52,7 @@ async function uploadFileOptimized(file, uploadId, options = {}) {
     
     if (fileSize > chunkSize) {
       // Large file upload with optimized chunking
-      logger.info(`ðŸ“Œ Large file detected. Using chunked upload with ${Math.round(chunkSize / 1024 / 1024)}MB chunks`);
+      logger.info(`Ã°Å¸â€œÅ’ Large file detected. Using chunked upload with ${Math.round(chunkSize / 1024 / 1024)}MB chunks`);
       
       const startFileResponse = await b2.startLargeFile({
         bucketId: bucketId,
@@ -64,7 +64,7 @@ async function uploadFileOptimized(file, uploadId, options = {}) {
       const totalParts = Math.ceil(fileSize / chunkSize);
       let partSha1Array = [];
       
-      logger.info(`ðŸ“Œ Uploading ${totalParts} parts of ~${Math.round(chunkSize / 1024 / 1024)}MB each`);
+      logger.info(`Ã°Å¸â€œÅ’ Uploading ${totalParts} parts of ~${Math.round(chunkSize / 1024 / 1024)}MB each`);
       
       // Process chunks sequentially to minimize memory usage
       for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
@@ -84,7 +84,7 @@ async function uploadFileOptimized(file, uploadId, options = {}) {
         const sha1Hash = crypto.createHash('sha1').update(buffer).digest('hex');
         
         // Upload this chunk with retry logic
-        logger.debug(`ðŸ“Œ Uploading part ${partNumber}/${totalParts} (${Math.round(currentChunkSize / 1024 / 1024)}MB)`);
+        logger.debug(`Ã°Å¸â€œÅ’ Uploading part ${partNumber}/${totalParts} (${Math.round(currentChunkSize / 1024 / 1024)}MB)`);
         
         await uploadChunkWithRetry(fileId, partNumber, buffer, uploadId);
         
@@ -113,7 +113,7 @@ async function uploadFileOptimized(file, uploadId, options = {}) {
       }
       
       // Finalize the large file upload
-      logger.info(`ðŸ“Œ Finalizing large file upload with ${partSha1Array.length} parts`);
+      logger.info(`Ã°Å¸â€œÅ’ Finalizing large file upload with ${partSha1Array.length} parts`);
       updateUploadStatus(uploadId, { 
         progress: 98,
         stage: 'finalizing B2 upload' 
@@ -123,7 +123,7 @@ async function uploadFileOptimized(file, uploadId, options = {}) {
       
     } else {
       // Small file upload (< 25MB)
-      logger.info(`ðŸ“Œ Small file detected (${Math.round(fileSize / 1024 / 1024)}MB). Using direct upload`);
+      logger.info(`Ã°Å¸â€œÅ’ Small file detected (${Math.round(fileSize / 1024 / 1024)}MB). Using direct upload`);
       
       updateUploadStatus(uploadId, { 
         progress: 90,
@@ -145,7 +145,7 @@ async function uploadFileOptimized(file, uploadId, options = {}) {
         contentType: contentType,
       });
       
-      logger.info(`âœ… Small file upload complete`);
+      logger.info(`Ã¢Å“â€¦ Small file upload complete`);
     }
     
     // Close file handle
@@ -157,23 +157,23 @@ async function uploadFileOptimized(file, uploadId, options = {}) {
     // Clean up temp file immediately if requested
     if (deleteFile && fsSync.existsSync(file.path)) {
       await fs.unlink(file.path);
-      logger.info(`ðŸ§¹ Cleaned up temp file: ${file.path}`);
+      logger.info(`Ã°Å¸Â§Â¹ Cleaned up temp file: ${file.path}`);
     }
     
     memoryMonitor.logMemoryUsage(`After B2 upload ${uploadId}`);
-    logger.info(`âœ… B2 upload completed: ${fileUrl}`);
+    logger.info(`Ã¢Å“â€¦ B2 upload completed: ${fileUrl}`);
     
     return fileUrl;
     
   } catch (error) {
-    logger.error(`âŒ B2 upload failed for ${uploadId}:`, error);
+    logger.error(`Ã¢ÂÅ’ B2 upload failed for ${uploadId}:`, error);
     
     // Clean up file handle
     if (fileHandle) {
       try {
         await fileHandle.close();
       } catch (closeError) {
-        logger.error(`âŒ Error closing file handle:`, closeError);
+        logger.error(`Ã¢ÂÅ’ Error closing file handle:`, closeError);
       }
     }
     
@@ -181,9 +181,9 @@ async function uploadFileOptimized(file, uploadId, options = {}) {
     if (deleteFile && fsSync.existsSync(file.path)) {
       try {
         await fs.unlink(file.path);
-        logger.info(`ðŸ§¹ Cleaned up temp file after error: ${file.path}`);
+        logger.info(`Ã°Å¸Â§Â¹ Cleaned up temp file after error: ${file.path}`);
       } catch (cleanupError) {
-        logger.error(`âŒ Failed to clean up temp file:`, cleanupError);
+        logger.error(`Ã¢ÂÅ’ Failed to clean up temp file:`, cleanupError);
       }
     }
     
@@ -210,21 +210,21 @@ async function uploadChunkWithRetry(fileId, partNumber, buffer, uploadId, maxRet
         data: buffer,
       });
       
-      logger.debug(`âœ… Uploaded part ${partNumber} successfully`);
+      logger.debug(`Ã¢Å“â€¦ Uploaded part ${partNumber} successfully`);
       return response;
       
     } catch (error) {
       attempts++;
-      logger.warn(`âš ï¸ Failed to upload part ${partNumber} (attempt ${attempts}/${maxRetries}):`, error.message);
+      logger.warn(`Ã¢Å¡Â Ã¯Â¸Â Failed to upload part ${partNumber} (attempt ${attempts}/${maxRetries}):`, error.message);
       
       if (attempts >= maxRetries) {
-        logger.error(`âŒ Part ${partNumber} failed after ${maxRetries} attempts`);
+        logger.error(`Ã¢ÂÅ’ Part ${partNumber} failed after ${maxRetries} attempts`);
         throw error;
       }
       
       // Exponential backoff
       const backoffMs = 1000 * Math.pow(2, attempts);
-      logger.info(`â³ Retrying part ${partNumber} in ${backoffMs/1000} seconds...`);
+      logger.info(`Ã¢ÂÂ³ Retrying part ${partNumber} in ${backoffMs/1000} seconds...`);
       await new Promise(resolve => setTimeout(resolve, backoffMs));
     }
   }
@@ -244,7 +244,7 @@ async function uploadThumbnail(filePath, fileName) {
       throw new Error(`Thumbnail file not found at: ${filePath}`);
     }
     
-    logger.info(`ðŸ–¼ï¸ Uploading thumbnail: ${fileName}`);
+    logger.info(`Ã°Å¸â€“Â¼Ã¯Â¸Â Uploading thumbnail: ${fileName}`);
     
     // Get upload URL
     const uploadUrlData = await b2.getUploadUrl({ bucketId });
@@ -264,11 +264,11 @@ async function uploadThumbnail(filePath, fileName) {
     // Construct thumbnail URL
     const thumbnailUrl = `https://${bucketName}.s3.eu-central-003.backblazeb2.com/${fileName}`;
     
-    logger.info(`âœ… Thumbnail uploaded: ${thumbnailUrl}`);
+    logger.info(`Ã¢Å“â€¦ Thumbnail uploaded: ${thumbnailUrl}`);
     return thumbnailUrl;
     
   } catch (error) {
-    logger.error(`âŒ Thumbnail upload failed:`, error);
+    logger.error(`Ã¢ÂÅ’ Thumbnail upload failed:`, error);
     throw error;
   }
 }
@@ -287,7 +287,7 @@ async function uploadSubtitle(filePath, fileName) {
       throw new Error(`Subtitle file not found at: ${filePath}`);
     }
     
-    logger.info(`📄 Uploading subtitle: ${fileName}`);
+    logger.info(`ðŸ“„ Uploading subtitle: ${fileName}`);
     
     // Get upload URL
     const uploadUrlData = await b2.getUploadUrl({ bucketId });
@@ -307,11 +307,54 @@ async function uploadSubtitle(filePath, fileName) {
     // Construct subtitle URL
     const subtitleUrl = `https://${bucketName}.s3.eu-central-003.backblazeb2.com/${fileName}`;
     
-    logger.info(`✅ Subtitle uploaded: ${subtitleUrl}`);
+    logger.info(`âœ… Subtitle uploaded: ${subtitleUrl}`);
     return subtitleUrl;
     
   } catch (error) {
-    logger.error(`❌ Subtitle upload failed:`, error);
+    logger.error(`âŒ Subtitle upload failed:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Upload frame image to B2 (JPEG format)
+ */
+async function uploadFrame(filePath, fileName) {
+  try {
+    await b2.authorize();
+    
+    const bucketId = config.b2.buckets.frame.id;
+    const bucketName = config.b2.buckets.frame.name;
+    
+    if (!fsSync.existsSync(filePath)) {
+      throw new Error(`Frame file not found at: ${filePath}`);
+    }
+    
+    logger.info(`ðŸ–¼ï¸ Uploading frame: ${fileName}`);
+    
+    // Get upload URL
+    const uploadUrlData = await b2.getUploadUrl({ bucketId });
+    
+    // Read frame file (small image, usually 1-5MB)
+    const fileData = await fs.readFile(filePath);
+    
+    // Upload frame
+    await b2.uploadFile({
+      uploadUrl: uploadUrlData.data.uploadUrl,
+      uploadAuthToken: uploadUrlData.data.authorizationToken,
+      fileName: fileName,
+      data: fileData,
+      contentType: "image/jpeg",
+    });
+    
+    // Construct frame URL
+    const frameUrl = `https://${bucketName}.s3.eu-central-003.backblazeb2.com/${fileName}`;
+    
+    logger.info(`âœ… Frame uploaded: ${frameUrl}`);
+    return frameUrl;
+    
+  } catch (error) {
+    logger.error(`âŒ Frame upload failed:`, error);
     throw error;
   }
 }
@@ -323,7 +366,7 @@ async function deleteFile(fileName, bucketId = config.b2.buckets.video.id) {
   try {
     await b2.authorize();
     
-    logger.info(`ðŸ—‘ï¸ Searching for file to delete: ${fileName}`);
+    logger.info(`Ã°Å¸â€”â€˜Ã¯Â¸Â Searching for file to delete: ${fileName}`);
     
     // Find the file
     const listFilesResponse = await b2.listFileNames({
@@ -335,7 +378,7 @@ async function deleteFile(fileName, bucketId = config.b2.buckets.video.id) {
     const file = listFilesResponse.data.files.find(f => f.fileName === fileName);
     
     if (!file) {
-      logger.warn(`âš ï¸ File not found for deletion: ${fileName}`);
+      logger.warn(`Ã¢Å¡Â Ã¯Â¸Â File not found for deletion: ${fileName}`);
       return false;
     }
     
@@ -345,11 +388,11 @@ async function deleteFile(fileName, bucketId = config.b2.buckets.video.id) {
       fileName: file.fileName
     });
     
-    logger.info(`âœ… Successfully deleted: ${fileName}`);
+    logger.info(`Ã¢Å“â€¦ Successfully deleted: ${fileName}`);
     return true;
     
   } catch (error) {
-    logger.error(`âŒ Delete failed for ${fileName}:`, error);
+    logger.error(`Ã¢ÂÅ’ Delete failed for ${fileName}:`, error);
     throw error;
   }
 }
@@ -360,10 +403,10 @@ async function deleteFile(fileName, bucketId = config.b2.buckets.video.id) {
 async function testConnection() {
   try {
     await b2.authorize();
-    logger.info('âœ… B2 connection successful');
+    logger.info('Ã¢Å“â€¦ B2 connection successful');
     return true;
   } catch (error) {
-    logger.error('âŒ B2 connection failed:', error);
+    logger.error('Ã¢ÂÅ’ B2 connection failed:', error);
     throw error;
   }
 }
@@ -373,6 +416,7 @@ module.exports = {
   uploadFile: uploadFileOptimized, // Alias for backward compatibility
   uploadThumbnail,
   uploadSubtitle,
+  uploadFrame,
   deleteFile,
   testConnection
 };

@@ -14,7 +14,7 @@ const logger = require('../utils/logger');
  * @returns {Promise<string>} - Path to the generated thumbnail
  */
 async function generateThumbnail(videoPath, outputPath, timestamp = '00:00:05') {
-  logger.info('🔍 THUMBNAIL EXTRACTION STARTING');
+  logger.info('ðŸ” THUMBNAIL EXTRACTION STARTING');
   logger.info('Video path:', videoPath);
   logger.info('Output path:', outputPath);
   
@@ -42,7 +42,7 @@ async function generateThumbnail(videoPath, outputPath, timestamp = '00:00:05') 
     
     ffmpegProcess.on('close', (code) => {
       if (code === 0) {
-        logger.info(`✅ Thumbnail generated successfully: ${outputPath}`);
+        logger.info(`âœ… Thumbnail generated successfully: ${outputPath}`);
         resolve(outputPath);
       } else {
         const error = new Error(`FFmpeg failed with code ${code}: ${errorOutput}`);
@@ -71,7 +71,7 @@ async function generateThumbnail(videoPath, outputPath, timestamp = '00:00:05') 
  */
 async function extractVideoMetadata(videoPath) {
   return new Promise((resolve, reject) => {
-    logger.info(`📊 Extracting metadata from: ${videoPath}`);
+    logger.info(`ðŸ“Š Extracting metadata from: ${videoPath}`);
     
     ffmpeg.ffprobe(videoPath, (err, metadata) => {
       if (err) {
@@ -112,7 +112,7 @@ async function extractVideoMetadata(videoPath) {
  */
 async function extractMetadataFromRemote(videoUrl) {
   return new Promise((resolve, reject) => {
-    logger.info(`📊 Extracting metadata from remote URL: ${videoUrl}`);
+    logger.info(`ðŸ“Š Extracting metadata from remote URL: ${videoUrl}`);
     
     const ffprobeArgs = [
       '-v', 'error',
@@ -169,7 +169,7 @@ async function extractMetadataFromRemote(videoUrl) {
           size: parseInt(format.size || 0),
         };
         
-        logger.info(`✅ Extracted remote metadata:`, result);
+        logger.info(`âœ… Extracted remote metadata:`, result);
         resolve(result);
       } catch (parseError) {
         reject(new Error(`Failed to parse metadata: ${parseError.message}`));
@@ -178,7 +178,7 @@ async function extractMetadataFromRemote(videoUrl) {
     
     ffprobeProcess.on('error', (error) => {
       clearTimeout(timeout);
-      logger.error(`❌ FFprobe process error: ${error.message}`);
+      logger.error(`âŒ FFprobe process error: ${error.message}`);
       reject(error);
     });
   });
@@ -195,14 +195,14 @@ async function extractVideoMetadataUnified(source) {
     const isRemote = source.startsWith('http://') || source.startsWith('https://');
     
     if (isRemote) {
-      logger.info(`📊 Detected remote source: ${source}`);
+      logger.info(`ðŸ“Š Detected remote source: ${source}`);
       return await extractMetadataFromRemote(source);
     } else {
-      logger.info(`📊 Detected local source: ${source}`);
+      logger.info(`ðŸ“Š Detected local source: ${source}`);
       return await extractVideoMetadata(source);
     }
   } catch (error) {
-    logger.warn(`⚠️ Metadata extraction failed: ${error.message}`);
+    logger.warn(`âš ï¸ Metadata extraction failed: ${error.message}`);
     
     // Return safe defaults instead of throwing
     return {
@@ -264,7 +264,7 @@ async function extractThumbnailFromRemote(videoUrl, thumbnailPath, seekTime = 5)
       clearTimeout(timeout);
       
       if (code === 0 && fs.existsSync(thumbnailPath)) {
-        logger.info(`✅ Successfully extracted thumbnail: ${thumbnailPath}`);
+        logger.info(`âœ… Successfully extracted thumbnail: ${thumbnailPath}`);
         resolve(thumbnailPath);
       } else {
         const error = new Error(`FFmpeg failed with code ${code}: ${errorOutput}`);
@@ -276,7 +276,7 @@ async function extractThumbnailFromRemote(videoUrl, thumbnailPath, seekTime = 5)
     // Handle process errors
     ffmpegProcess.on('error', (error) => {
       clearTimeout(timeout);
-      logger.error(`❌ FFmpeg process error: ${error.message}`);
+      logger.error(`âŒ FFmpeg process error: ${error.message}`);
       reject(error);
     });
   });
@@ -315,7 +315,7 @@ async function createPlaceholderThumbnail(outputPath) {
     command.on('close', (code) => {
       if (code === 0) {
         if (fs.existsSync(outputPath)) {
-          logger.info(`✅ Created placeholder thumbnail: ${outputPath}`);
+          logger.info(`âœ… Created placeholder thumbnail: ${outputPath}`);
           resolve(outputPath);
         } else {
           const error = new Error('FFmpeg completed but placeholder file was not created');
@@ -373,12 +373,81 @@ async function testFfmpeg() {
   });
 }
 
+/**
+ * Extract a single frame from a remote video URL with accurate seeking
+ * @param {string} videoUrl - URL of the video
+ * @param {number} timestamp - Time position for frame (in seconds)
+ * @param {string} framePath - Path for the frame output
+ * @returns {Promise<string>} - Path to the generated frame
+ */
+async function extractFrameFromRemote(videoUrl, timestamp, framePath) {
+  return new Promise((resolve, reject) => {
+    logger.info(`[FFmpeg] Extracting frame from remote URL: ${videoUrl} at ${timestamp}s`);
+    
+    // Ensure the output directory exists
+    const directory = path.dirname(framePath);
+    ensureDirectory(directory);
+    
+    let errorOutput = '';
+    
+    // Use spawn directly for better error handling and control
+    // -accurate_seek ensures frame-perfect extraction
+    // -ss before -i enables input seeking (streams only necessary data)
+    const ffmpegProcess = spawn(config.ffmpeg.binPath, [
+      '-y',                         // Overwrite output files
+      '-accurate_seek',             // Enable accurate seeking for frame precision
+      '-ss', timestamp.toString(),  // Seek to position (BEFORE input for efficiency)
+      '-i', videoUrl,               // Input file (streams from URL)
+      '-vframes', '1',              // Extract exactly 1 frame
+      '-q:v', '2',                  // High quality JPEG (1-31 scale, 2 is very high)
+      framePath                     // Output path
+    ]);
+    
+    // Collect error output
+    ffmpegProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      errorOutput += output;
+      logger.debug(`[FFmpeg Frame] ${output}`);
+    });
+    
+    // Set a timeout in case FFmpeg hangs
+    const timeout = setTimeout(() => {
+      ffmpegProcess.kill('SIGKILL');
+      const error = new Error('FFmpeg frame extraction timed out after 30 seconds');
+      logger.error(error.message);
+      reject(error);
+    }, config.ffmpeg.timeout);
+    
+    // Handle process completion
+    ffmpegProcess.on('close', (code) => {
+      clearTimeout(timeout);
+      
+      if (code === 0 && fs.existsSync(framePath)) {
+        logger.info(`âœ… Successfully extracted frame: ${framePath}`);
+        resolve(framePath);
+      } else {
+        const error = new Error(`FFmpeg frame extraction failed with code ${code}: ${errorOutput}`);
+        logger.error(error.message);
+        reject(error);
+      }
+    });
+    
+    // Handle process errors
+    ffmpegProcess.on('error', (error) => {
+      clearTimeout(timeout);
+      logger.error(`âŒ FFmpeg frame extraction process error: ${error.message}`);
+      reject(error);
+    });
+  });
+}
+
 module.exports = {
   generateThumbnail,
   extractVideoMetadata,
   extractMetadataFromRemote,
   extractVideoMetadataUnified,
   extractThumbnailFromRemote,
+  extractFrameFromRemote,
   createPlaceholderThumbnail,
   testFfmpeg
 };
