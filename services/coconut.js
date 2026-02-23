@@ -13,7 +13,7 @@
 const logger = require('../utils/logger');
 const { config } = require('../config');
 
-const COCONUT_API_URL = 'https://api.coconut.co/v2/jobs';
+const COCONUT_API_URL = process.env.COCONUT_API_URL || 'https://api-eu-west-1.coconut.co/v2/jobs';
 
 /**
  * Create an HLS transcoding job with Coconut
