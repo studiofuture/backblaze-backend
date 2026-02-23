@@ -191,9 +191,86 @@ async function isSupabaseAvailable() {
   return !!client;
 }
 
+/**
+ * Update HLS transcoding status for a video
+ * Called by Coconut webhook on job completion, and by upload routes to set initial status
+ * @param {string} videoId - ID of the video in Supabase
+ * @param {Object} hlsData - HLS status data
+ * @param {string} hlsData.hls_status - 'processing' | 'ready' | 'failed'
+ * @param {string} [hlsData.hls_url] - URL to master.m3u8 playlist
+ * @param {string} [hlsData.transcode_job_id] - Coconut job ID
+ * @returns {Promise<boolean>} - Success status
+ */
+async function updateHlsStatus(videoId, hlsData) {
+  if (!videoId) {
+    logger.error('[Supabase] Missing videoId for HLS status update');
+    return false;
+  }
+
+  try {
+    if (!serviceClient) {
+      serviceClient = initServiceClient();
+    }
+
+    if (!serviceClient) {
+      logger.warn('[Supabase] Service client not available for HLS status update');
+      return false;
+    }
+
+    const updatePayload = {
+      updated_at: new Date().toISOString()
+    };
+
+    if (hlsData.hls_status !== undefined) updatePayload.hls_status = hlsData.hls_status;
+    if (hlsData.hls_url !== undefined) updatePayload.hls_url = hlsData.hls_url;
+    if (hlsData.transcode_job_id !== undefined) updatePayload.transcode_job_id = hlsData.transcode_job_id;
+
+    logger.info(`[Supabase] Updating HLS status for video ${videoId}:`, updatePayload);
+
+    const { data, error } = await serviceClient
+      .from('videos')
+      .update(updatePayload)
+      .eq('id', videoId)
+      .select();
+
+    if (error) {
+      logger.error(`[Supabase] Failed to update HLS status:`, error);
+      return false;
+    }
+
+    if (data && data.length > 0) {
+      logger.info(`[Supabase] HLS status updated successfully for video ${videoId}`);
+      return true;
+    }
+
+    // Record might not exist yet (frontend creates it) — retry once after brief delay
+    logger.warn(`[Supabase] No record found for video ${videoId}, will retry in 2s`);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    const { data: retryData, error: retryError } = await serviceClient
+      .from('videos')
+      .update(updatePayload)
+      .eq('id', videoId)
+      .select();
+
+    if (retryError || !retryData || retryData.length === 0) {
+      logger.error(`[Supabase] HLS status update retry failed for video ${videoId}:`, retryError);
+      return false;
+    }
+
+    logger.info(`[Supabase] HLS status updated on retry for video ${videoId}`);
+    return true;
+
+  } catch (error) {
+    logger.error(`[Supabase] HLS status update error:`, error);
+    return false;
+  }
+}
+
 module.exports = {
   updateVideoMetadata,
   updateThumbnail,
+  updateHlsStatus,
   isSupabaseAvailable,
   getServiceClient: () => serviceClient
 };

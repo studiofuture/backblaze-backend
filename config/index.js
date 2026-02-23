@@ -25,11 +25,19 @@ const config = {
         id: process.env.B2_SUBTITLE_BUCKET_ID,
         name: process.env.B2_SUBTITLE_BUCKET_NAME || 'rushes-subtitles'
       },
-      frame: {
-        id: process.env.B2_FRAME_BUCKET_ID,
-        name: process.env.B2_FRAME_BUCKET_NAME || 'rushes-frames'
+      hls: {
+        id: process.env.B2_HLS_BUCKET_ID,
+        name: process.env.B2_HLS_BUCKET_NAME || 'rushes-hls',
+        appKeyId: process.env.B2_HLS_APP_KEY_ID,
+        appKey: process.env.B2_HLS_APP_KEY
       }
     }
+  },
+  
+  // Coconut.co Transcoding Configuration
+  coconut: {
+    apiKey: process.env.COCONUT_API_KEY,
+    webhookUrl: process.env.COCONUT_WEBHOOK_URL  // e.g. https://rushes-backend.onrender.com/api/coconut/webhook
   },
   
   // Upload Configuration - Enhanced with security limits
@@ -218,7 +226,13 @@ const optionalEnvVars = [
   'B2_VIDEO_BUCKET_NAME',
   'B2_THUMBNAIL_BUCKET_NAME',
   'B2_PROFILE_BUCKET_NAME',
-  'B2_SUBTITLE_BUCKET_NAME'
+  'B2_SUBTITLE_BUCKET_NAME',
+  'B2_HLS_BUCKET_ID',
+  'B2_HLS_BUCKET_NAME',
+  'B2_HLS_APP_KEY_ID',
+  'B2_HLS_APP_KEY',
+  'COCONUT_API_KEY',
+  'COCONUT_WEBHOOK_URL'
 ];
 
 /**
@@ -337,7 +351,10 @@ function validateEnvironment() {
     subtitleBucketId: process.env.B2_SUBTITLE_BUCKET_ID ? 'Ã¢Å“â€¦ Set' : 'Ã¢Å’ Missing',
     subtitleBucketName: process.env.B2_SUBTITLE_BUCKET_NAME || 'Ã¢Å’ Missing (using default)',
     supabaseUrl: process.env.SUPABASE_URL ? 'Ã¢Å“â€¦ Set' : 'Ã¢Å¡Â Ã¯Â¸Â Optional - Missing',
-    supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'Ã¢Å“â€¦ Set' : 'Ã¢Å¡Â Ã¯Â¸Â Optional - Missing'
+    supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'Ã¢Å“â€¦ Set' : 'Ã¢Å¡Â Ã¯Â¸Â Optional - Missing',
+    hlsBucketId: process.env.B2_HLS_BUCKET_ID ? '✅ Set' : '⚠️ Optional - Missing',
+    coconutApiKey: process.env.COCONUT_API_KEY ? '✅ Set' : '⚠️ Optional - Missing',
+    coconutWebhookUrl: process.env.COCONUT_WEBHOOK_URL ? '✅ Set' : '⚠️ Optional - Missing'
   });
 
   // Security configuration summary

@@ -19,6 +19,7 @@ const uploadProcessor = require('../services/upload-processor');
 const b2Service = require('../services/b2');
 const ffmpegService = require('../services/ffmpeg');
 const multipartUploader = require('../services/multipart-uploader'); // Now streaming proxy version
+const coconutService = require('../services/coconut');
 
 // Security: Rate limiting configurations
 const strictRateLimit = rateLimit({
@@ -320,6 +321,23 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
     
     console.log(`Ã°Å¸â€œÅ  Final metadata being sent:`, JSON.stringify(metadata, null, 2));
     
+    
+    // Trigger HLS transcoding via Coconut (fire-and-forget, non-blocking)
+    let hlsStatus = null;
+    let transcodeJobId = null;
+    if (sanitizedVideoId && result.videoUrl) {
+      try {
+        const hlsResult = await coconutService.createHlsJob(sanitizedVideoId, result.videoUrl);
+        if (hlsResult) {
+          hlsStatus = 'processing';
+          transcodeJobId = hlsResult.jobId;
+          console.log(`🎬 HLS transcode job created: ${hlsResult.jobId} for video ${sanitizedVideoId}`);
+        }
+      } catch (hlsError) {
+        console.error(`⚠️ HLS transcode trigger failed (non-fatal):`, hlsError.message);
+      }
+    }
+    
     res.json({
       status: "success",
       uploadId,
@@ -330,8 +348,12 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
       metadata: metadata,
       uploadComplete: result.uploadComplete,
       publishReady: result.publishReady,
-      fileSizeMB: result.fileSizeMB
+      fileSizeMB: result.fileSizeMB,
+      // HLS transcoding status for frontend to store in Supabase
+      hlsStatus: hlsStatus,
+      transcodeJobId: transcodeJobId
     });
+
     
   } catch (error) {
     console.error(`Ã¢ÂÅ’ Complete chunks processing failed:`, error);
@@ -675,6 +697,22 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
     
     console.log(`Ã°Å¸Å½â€° Streaming proxy multipart upload completed successfully: ${sanitizedUploadId}`);
     
+    // Trigger HLS transcoding via Coconut (fire-and-forget, non-blocking)
+    let hlsStatus = null;
+    let transcodeJobId = null;
+    if (sanitizedVideoId && result.videoUrl) {
+      try {
+        const hlsResult = await coconutService.createHlsJob(sanitizedVideoId, result.videoUrl);
+        if (hlsResult) {
+          hlsStatus = 'processing';
+          transcodeJobId = hlsResult.jobId;
+          console.log(`🎬 HLS transcode job created: ${hlsResult.jobId} for video ${sanitizedVideoId}`);
+        }
+      } catch (hlsError) {
+        console.error(`⚠️ HLS transcode trigger failed (non-fatal):`, hlsError.message);
+      }
+    }
+    
     // Return response with metadata
     res.json({
       success: true,
@@ -687,6 +725,9 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
       // Include metadata in response for frontend - use the properly structured metadata
       metadata: metadata,
       thumbnailUrl: result.thumbnailUrl,
+      // HLS transcoding status for frontend to store in Supabase
+      hlsStatus: hlsStatus,
+      transcodeJobId: transcodeJobId,
       message: 'Upload completed successfully with metadata extracted'
     });
     
@@ -1411,122 +1452,6 @@ router.post('/subtitle', moderateRateLimit, validateUploadInput, async (req, res
       error: 'Subtitle upload failed',
       details: error.message,
       uploadId: uploadId || 'unknown'
-    });
-  }
-});
-
-/**
- * NEW: EXTRACT FRAME FROM VIDEO
- * POST /upload/extract-frame
- * Extract a single frame from a video at a specific timestamp and upload to B2
- */
-router.post('/extract-frame', moderateRateLimit, async (req, res) => {
-  const startTime = Date.now();
-  let tempFramePath = null;
-  
-  try {
-    // Validate request body
-    const { videoUrl, timestamp, videoId, referenceId } = req.body;
-    
-    // Input validation
-    if (!videoUrl || !timestamp || !videoId || !referenceId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: videoUrl, timestamp, videoId, and referenceId are required'
-      });
-    }
-    
-    // Validate videoUrl is a string and looks like a URL
-    if (typeof videoUrl !== 'string' || !videoUrl.startsWith('http')) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid videoUrl: must be a valid HTTP/HTTPS URL'
-      });
-    }
-    
-    // Validate timestamp is a positive number
-    const timestampNum = parseFloat(timestamp);
-    if (isNaN(timestampNum) || timestampNum < 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid timestamp: must be a positive number'
-      });
-    }
-    
-    // Sanitize inputs
-    const sanitizedVideoId = sanitizeInput(videoId);
-    const sanitizedReferenceId = sanitizeInput(referenceId);
-    
-    console.log(`ðŸ–¼ï¸ Frame extraction request: videoId=${sanitizedVideoId}, referenceId=${sanitizedReferenceId}, timestamp=${timestampNum}s`);
-    
-    // Generate temp filename for frame
-    const tempDir = path.join('uploads', 'temp', 'frames');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    
-    const tempFilename = `frame-${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
-    tempFramePath = path.join(tempDir, tempFilename);
-    
-    // Extract frame from remote video URL
-    console.log(`ðŸŽ¬ Extracting frame from ${videoUrl} at ${timestampNum}s...`);
-    await ffmpegService.extractFrameFromRemote(videoUrl, timestampNum, tempFramePath);
-    
-    // Generate final filename
-    const finalFilename = `${sanitizedVideoId}-${sanitizedReferenceId}-${timestampNum}s.jpg`;
-    
-    // Upload frame to B2
-    console.log(`â¬†ï¸ Uploading frame to B2: ${finalFilename}`);
-    const frameUrl = await b2Service.uploadFrame(tempFramePath, finalFilename);
-    
-    // Clean up temp file
-    if (fs.existsSync(tempFramePath)) {
-      fs.unlinkSync(tempFramePath);
-      tempFramePath = null;
-    }
-    
-    const processingTime = Date.now() - startTime;
-    console.log(`âœ… Frame extraction completed in ${processingTime}ms`);
-    
-    // Return success response
-    res.json({
-      success: true,
-      frameUrl: frameUrl,
-      timestamp: timestampNum,
-      videoId: sanitizedVideoId,
-      referenceId: sanitizedReferenceId
-    });
-    
-  } catch (error) {
-    console.error(`âŒ Frame extraction error:`, error);
-    
-    // Clean up temp file on error
-    if (tempFramePath && fs.existsSync(tempFramePath)) {
-      try {
-        fs.unlinkSync(tempFramePath);
-      } catch (cleanupError) {
-        console.error(`âŒ Frame cleanup error: ${cleanupError.message}`);
-      }
-    }
-    
-    // Determine appropriate status code
-    let statusCode = 500;
-    let errorMessage = 'Failed to extract frame';
-    
-    if (error.message.includes('not accessible') || error.message.includes('404')) {
-      statusCode = 404;
-      errorMessage = 'Video URL is not accessible';
-    } else if (error.message.includes('timeout')) {
-      statusCode = 503;
-      errorMessage = 'Frame extraction timed out';
-    } else if (error.message.includes('authentication') || error.message.includes('authorization')) {
-      statusCode = 500;
-      errorMessage = 'Failed to upload frame to storage';
-    }
-    
-    res.status(statusCode).json({
-      success: false,
-      error: `${errorMessage}: ${error.message}`
     });
   }
 });

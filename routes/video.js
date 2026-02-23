@@ -4,6 +4,7 @@ const b2Service = require('../services/b2');
 const logger = require('../utils/logger');
 const { config } = require('../config');
 const { createClient } = require('@supabase/supabase-js');
+const B2 = require('backblaze-b2');
 
 
 // Initialize Supabase client
@@ -45,7 +46,7 @@ router.delete('/file/:filename', async (req, res) => {
       return res.status(400).json({ error: "Filename is required" });
     }
     
-    logger.info(`📌 Attempting to delete video by filename: ${filename}`);
+    logger.info(`ðŸ“Œ Attempting to delete video by filename: ${filename}`);
     
     // Delete the file from B2
     const deleted = await b2Service.deleteFile(filename, config.b2.buckets.video.id);
@@ -60,7 +61,7 @@ router.delete('/file/:filename', async (req, res) => {
       message: `Video ${filename} deleted successfully` 
     });
   } catch (error) {
-    logger.error(`❌ Error in delete endpoint:`, error);
+    logger.error(`âŒ Error in delete endpoint:`, error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -77,6 +78,7 @@ router.delete('/:videoId', async (req, res) => {
     videoId: null,
     videoDeletion: { attempted: false, success: false, filename: null, error: null },
     thumbnailDeletion: { attempted: false, success: false, filename: null, error: null },
+    hlsDeletion: { attempted: false, success: false, filesDeleted: 0, error: null },
     databaseDeletion: { attempted: false, success: false, error: null },
     overallSuccess: false
   };
@@ -92,7 +94,7 @@ router.delete('/:videoId', async (req, res) => {
       });
     }
     
-    logger.info(`📌 Starting two-phase deletion for video ID: ${videoId}`);
+    logger.info(`ðŸ“Œ Starting two-phase deletion for video ID: ${videoId}`);
     
     // Get Supabase client
     const supabase = getSupabaseClient();
@@ -104,16 +106,16 @@ router.delete('/:videoId', async (req, res) => {
     }
     
     // PHASE 1: Get video data from database
-    logger.info(`📋 Phase 1: Retrieving video data from database`);
+    logger.info(`ðŸ“‹ Phase 1: Retrieving video data from database`);
     // FIXED: Removed 'url' from the select query - only use columns that exist
     const { data, error } = await supabase
       .from('videos')
-      .select('storage_url, original_filename, thumbnail_url')
+      .select('storage_url, original_filename, thumbnail_url, hls_status')
       .eq('id', videoId)
       .single();
     
     if (error || !data) {
-      logger.error(`❌ Video not found in database:`, error);
+      logger.error(`âŒ Video not found in database:`, error);
       return res.status(404).json({ 
         error: "Video not found in database",
         report: deletionReport 
@@ -121,7 +123,7 @@ router.delete('/:videoId', async (req, res) => {
     }
     
     // PHASE 2: Delete from B2 Storage
-    logger.info(`🗑️ Phase 2: Deleting files from B2 storage`);
+    logger.info(`ðŸ—‘ï¸ Phase 2: Deleting files from B2 storage`);
     
     // Extract video filename
     let videoFilename = null;
@@ -139,7 +141,7 @@ router.delete('/:videoId', async (req, res) => {
       videoFilename = parts[parts.length - 1];
       deletionReport.videoDeletion.filename = videoFilename;
       
-      logger.info(`📌 Video filename to delete: ${videoFilename}`);
+      logger.info(`ðŸ“Œ Video filename to delete: ${videoFilename}`);
     }
     
     // Delete video file from B2
@@ -150,12 +152,12 @@ router.delete('/:videoId', async (req, res) => {
         deletionReport.videoDeletion.success = videoDeleted;
         
         if (videoDeleted) {
-          logger.info(`✅ Successfully deleted video file from B2: ${videoFilename}`);
+          logger.info(`âœ… Successfully deleted video file from B2: ${videoFilename}`);
         } else {
-          logger.warn(`⚠️ Video file not found in B2: ${videoFilename}`);
+          logger.warn(`âš ï¸ Video file not found in B2: ${videoFilename}`);
         }
       } catch (videoError) {
-        logger.error(`❌ Error deleting video from B2:`, videoError);
+        logger.error(`âŒ Error deleting video from B2:`, videoError);
         deletionReport.videoDeletion.error = videoError.message;
       }
     }
@@ -174,7 +176,7 @@ router.delete('/:videoId', async (req, res) => {
         deletionReport.thumbnailDeletion.attempted = true;
         
         try {
-          logger.info(`📌 Attempting to delete thumbnail: ${thumbnailFilename}`);
+          logger.info(`ðŸ“Œ Attempting to delete thumbnail: ${thumbnailFilename}`);
           const thumbnailDeleted = await b2Service.deleteFile(
             thumbnailFilename, 
             config.b2.buckets.thumbnail.id
@@ -182,14 +184,71 @@ router.delete('/:videoId', async (req, res) => {
           deletionReport.thumbnailDeletion.success = thumbnailDeleted;
           
           if (thumbnailDeleted) {
-            logger.info(`✅ Successfully deleted thumbnail from B2: ${thumbnailFilename}`);
+            logger.info(`âœ… Successfully deleted thumbnail from B2: ${thumbnailFilename}`);
           } else {
-            logger.warn(`⚠️ Thumbnail file not found in B2: ${thumbnailFilename}`);
+            logger.warn(`âš ï¸ Thumbnail file not found in B2: ${thumbnailFilename}`);
           }
         } catch (thumbError) {
-          logger.error(`❌ Error deleting thumbnail from B2:`, thumbError);
+          logger.error(`âŒ Error deleting thumbnail from B2:`, thumbError);
           deletionReport.thumbnailDeletion.error = thumbError.message;
         }
+      }
+    }
+    
+    // PHASE 2b: Delete HLS files from HLS bucket (if HLS was enabled for this video)
+    if (data.hls_status && config.b2.buckets.hls && config.b2.buckets.hls.id) {
+      deletionReport.hlsDeletion.attempted = true;
+      try {
+        logger.info(`🎬 Deleting HLS files for video: ${videoId}`);
+        
+        // Initialize a B2 client for HLS bucket using bucket-specific credentials
+        const hlsBucket = config.b2.buckets.hls;
+        const hlsB2 = new B2({
+          applicationKeyId: hlsBucket.appKeyId,
+          applicationKey: hlsBucket.appKey,
+        });
+        await hlsB2.authorize();
+        
+        // List all files with prefix {videoId}/ in the HLS bucket
+        let hlsFilesDeleted = 0;
+        let startFileName = null;
+        let hasMore = true;
+        
+        while (hasMore) {
+          const listResponse = await hlsB2.listFileNames({
+            bucketId: hlsBucket.id,
+            prefix: `${videoId}/`,
+            maxFileCount: 1000,
+            startFileName: startFileName
+          });
+          
+          const files = listResponse.data.files;
+          
+          for (const file of files) {
+            try {
+              await hlsB2.deleteFileVersion({
+                fileId: file.fileId,
+                fileName: file.fileName
+              });
+              hlsFilesDeleted++;
+            } catch (delErr) {
+              logger.warn(`⚠️ Failed to delete HLS file ${file.fileName}:`, delErr.message);
+            }
+          }
+          
+          hasMore = files.length === 1000;
+          if (hasMore) {
+            startFileName = files[files.length - 1].fileName;
+          }
+        }
+        
+        deletionReport.hlsDeletion.filesDeleted = hlsFilesDeleted;
+        deletionReport.hlsDeletion.success = true;
+        logger.info(`✅ Deleted ${hlsFilesDeleted} HLS files for video ${videoId}`);
+        
+      } catch (hlsError) {
+        logger.error(`❌ HLS cleanup error:`, hlsError);
+        deletionReport.hlsDeletion.error = hlsError.message;
       }
     }
     
@@ -199,7 +258,7 @@ router.delete('/:videoId', async (req, res) => {
                            deletionReport.videoDeletion.attempted && !deletionReport.videoDeletion.error;
     
     if (storageDeleted || storageNotFound) {
-      logger.info(`💾 Phase 3: Deleting video record from database`);
+      logger.info(`ðŸ’¾ Phase 3: Deleting video record from database`);
       deletionReport.databaseDeletion.attempted = true;
       
       try {
@@ -209,18 +268,18 @@ router.delete('/:videoId', async (req, res) => {
           .eq('id', videoId);
         
         if (deleteError) {
-          logger.error(`❌ Database deletion failed:`, deleteError);
+          logger.error(`âŒ Database deletion failed:`, deleteError);
           deletionReport.databaseDeletion.error = deleteError.message;
         } else {
           deletionReport.databaseDeletion.success = true;
-          logger.info(`✅ Successfully deleted video record from database`);
+          logger.info(`âœ… Successfully deleted video record from database`);
         }
       } catch (dbError) {
-        logger.error(`❌ Database deletion error:`, dbError);
+        logger.error(`âŒ Database deletion error:`, dbError);
         deletionReport.databaseDeletion.error = dbError.message;
       }
     } else {
-      logger.warn(`⚠️ Skipping database deletion due to storage deletion failures`);
+      logger.warn(`âš ï¸ Skipping database deletion due to storage deletion failures`);
     }
     
     // Determine overall success
@@ -232,14 +291,14 @@ router.delete('/:videoId', async (req, res) => {
     
     // Send appropriate response
     if (deletionReport.overallSuccess) {
-      logger.info(`🎉 Video ${videoId} fully deleted from system`);
+      logger.info(`ðŸŽ‰ Video ${videoId} fully deleted from system`);
       res.json({ 
         status: "success", 
         message: `Video ${videoId} successfully deleted`,
         report: deletionReport
       });
     } else {
-      logger.warn(`⚠️ Partial deletion for video ${videoId}`, deletionReport);
+      logger.warn(`âš ï¸ Partial deletion for video ${videoId}`, deletionReport);
       res.status(207).json({ 
         status: "partial_success", 
         message: "Video deletion partially completed - check report for details",
@@ -248,7 +307,7 @@ router.delete('/:videoId', async (req, res) => {
     }
     
   } catch (error) {
-    logger.error(`❌ Unexpected error in delete endpoint:`, error);
+    logger.error(`âŒ Unexpected error in delete endpoint:`, error);
     res.status(500).json({ 
       error: error.message,
       report: deletionReport
@@ -282,7 +341,7 @@ router.post('/cleanup/orphaned', async (req, res) => {
   };
 
   try {
-    logger.info(`🧹 Starting orphaned files cleanup`);
+    logger.info(`ðŸ§¹ Starting orphaned files cleanup`);
     
     const supabase = getSupabaseClient();
     if (!supabase) {
@@ -298,7 +357,7 @@ router.post('/cleanup/orphaned', async (req, res) => {
     await b2.authorize();
     
     // Step 1: Get all video URLs from database
-    logger.info(`📋 Fetching all video records from database`);
+    logger.info(`ðŸ“‹ Fetching all video records from database`);
     // FIXED: Removed 'url' from the select query
     const { data: videos, error: dbError } = await supabase
       .from('videos')
@@ -327,10 +386,10 @@ router.post('/cleanup/orphaned', async (req, res) => {
       }
     });
     
-    logger.info(`📊 Found ${knownVideoFiles.size} videos and ${knownThumbnailFiles.size} thumbnails in database`);
+    logger.info(`ðŸ“Š Found ${knownVideoFiles.size} videos and ${knownThumbnailFiles.size} thumbnails in database`);
     
     // Step 2: Clean up video bucket
-    logger.info(`🗑️ Checking video bucket for orphaned files`);
+    logger.info(`ðŸ—‘ï¸ Checking video bucket for orphaned files`);
     let startFileName = null;
     let hasMoreVideos = true;
     
@@ -349,14 +408,14 @@ router.post('/cleanup/orphaned', async (req, res) => {
           cleanupReport.videoBucket.orphanedFiles++;
           
           try {
-            logger.info(`🗑️ Deleting orphaned video: ${file.fileName}`);
+            logger.info(`ðŸ—‘ï¸ Deleting orphaned video: ${file.fileName}`);
             await b2.deleteFileVersion({
               fileId: file.fileId,
               fileName: file.fileName
             });
             cleanupReport.videoBucket.deletedFiles++;
           } catch (deleteError) {
-            logger.error(`❌ Failed to delete orphaned video ${file.fileName}:`, deleteError);
+            logger.error(`âŒ Failed to delete orphaned video ${file.fileName}:`, deleteError);
             cleanupReport.videoBucket.errors.push({
               fileName: file.fileName,
               error: deleteError.message
@@ -372,7 +431,7 @@ router.post('/cleanup/orphaned', async (req, res) => {
     }
     
     // Step 3: Clean up thumbnail bucket
-    logger.info(`🗑️ Checking thumbnail bucket for orphaned files`);
+    logger.info(`ðŸ—‘ï¸ Checking thumbnail bucket for orphaned files`);
     startFileName = null;
     let hasMoreThumbnails = true;
     
@@ -391,14 +450,14 @@ router.post('/cleanup/orphaned', async (req, res) => {
           cleanupReport.thumbnailBucket.orphanedFiles++;
           
           try {
-            logger.info(`🗑️ Deleting orphaned thumbnail: ${file.fileName}`);
+            logger.info(`ðŸ—‘ï¸ Deleting orphaned thumbnail: ${file.fileName}`);
             await b2.deleteFileVersion({
               fileId: file.fileId,
               fileName: file.fileName
             });
             cleanupReport.thumbnailBucket.deletedFiles++;
           } catch (deleteError) {
-            logger.error(`❌ Failed to delete orphaned thumbnail ${file.fileName}:`, deleteError);
+            logger.error(`âŒ Failed to delete orphaned thumbnail ${file.fileName}:`, deleteError);
             cleanupReport.thumbnailBucket.errors.push({
               fileName: file.fileName,
               error: deleteError.message
@@ -415,7 +474,7 @@ router.post('/cleanup/orphaned', async (req, res) => {
     
     cleanupReport.endTime = new Date().toISOString();
     
-    logger.info(`✅ Orphaned files cleanup completed`, {
+    logger.info(`âœ… Orphaned files cleanup completed`, {
       videosDeleted: cleanupReport.videoBucket.deletedFiles,
       thumbnailsDeleted: cleanupReport.thumbnailBucket.deletedFiles
     });
@@ -427,7 +486,7 @@ router.post('/cleanup/orphaned', async (req, res) => {
     });
     
   } catch (error) {
-    logger.error(`❌ Error in cleanup endpoint:`, error);
+    logger.error(`âŒ Error in cleanup endpoint:`, error);
     cleanupReport.endTime = new Date().toISOString();
     res.status(500).json({ 
       error: error.message,
@@ -448,7 +507,7 @@ router.get('/:filename/info', async (req, res) => {
       return res.status(400).json({ error: "Filename is required" });
     }
     
-    logger.info(`📌 Getting info for video: ${filename}`);
+    logger.info(`ðŸ“Œ Getting info for video: ${filename}`);
     
     res.json({
       status: "success",
@@ -457,7 +516,7 @@ router.get('/:filename/info', async (req, res) => {
       uploaded: new Date().toISOString()
     });
   } catch (error) {
-    logger.error(`❌ Error getting video info:`, error);
+    logger.error(`âŒ Error getting video info:`, error);
     res.status(500).json({ error: error.message });
   }
 });
