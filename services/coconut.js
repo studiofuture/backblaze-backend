@@ -6,9 +6,9 @@
  * 
  * Encoding ladder (Coconut never upscales, so we always send all variants):
  *   - Audio-only fallback: 64kbps AAC
- *   - 720p:  H.264 High, CRF quality=4, maxrate 4000k
- *   - 1080p: H.264 High, CRF quality=4, maxrate 8000k
- *   - 2160p: H.264 High, CRF quality=4, maxrate 16000k
+ *   - 720p:  H.264 High, CRF quality=3, maxrate 4000k
+ *   - 1080p: H.264 High, CRF quality=3, maxrate 12000k
+ *   - 2160p: H.264 High, CRF quality=3, maxrate 20000k
  */
 const logger = require('../utils/logger');
 const { config } = require('../config');
@@ -78,9 +78,9 @@ async function createHlsJob(videoId, sourceUrl) {
         // Netflix-tier encoding ladder — Coconut skips any variant above source resolution
         variants: [
           'mp4:x:64k',
-          'mp4:720p::quality=4,maxrate=4000k,vprofile=high',
-          'mp4:1080p::quality=4,maxrate=8000k,vprofile=high',
-          'mp4:2160p::quality=4,maxrate=16000k,vprofile=high'
+          'mp4:720p::quality=3,maxrate=4000k,vprofile=high',
+          'mp4:1080p::quality=3,maxrate=12000k,vprofile=high',
+          'mp4:2160p::quality=3,maxrate=20000k,vprofile=high'
         ]
       }
     }
