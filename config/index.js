@@ -142,8 +142,8 @@ const config = {
       strictMode: process.env.CORS_STRICT_MODE === 'true',
       allowedOrigins: process.env.ALLOWED_ORIGINS ? 
         process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim()) : [
-          "https://www.rvshes.com",
-          "https://rvshes.com",
+          "https://www.rushes.cc",
+          "https://rushes.cc",
           "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
           "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
           "https://lovable.dev",
