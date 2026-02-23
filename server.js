@@ -373,20 +373,23 @@ try {
       const videoId = req.query.videoId;
       const payload = req.body;
 
-      console.log(`[Coconut Webhook] Received for video ${videoId}: status=${payload.status}, progress=${payload.progress || 'n/a'}`);
+      // Coconut wraps data in: { job_id, event, data: { status, progress, outputs, ... } }
+      const eventType = payload.event;
+      const jobData = payload.data || {};
+      const jobId = payload.job_id || jobData.id;
+
+      console.log(`[Coconut Webhook] Received for video ${videoId}: event=${eventType}, job_id=${jobId}, progress=${jobData.progress || 'n/a'}`);
 
       if (!videoId) {
         console.error('[Coconut Webhook] Missing videoId query param');
         return res.status(400).json({ error: 'Missing videoId' });
       }
 
-      const jobStatus = payload.status;
-
-      if (jobStatus === 'job.completed') {
-        // Extract HLS URL from outputs
+      if (eventType === 'job.completed') {
+        // Extract HLS URL from outputs inside data
         let hlsUrl = null;
-        if (payload.outputs && Array.isArray(payload.outputs)) {
-          const httpstreamOutput = payload.outputs.find(o => o.type === 'httpstream');
+        if (jobData.outputs && Array.isArray(jobData.outputs)) {
+          const httpstreamOutput = jobData.outputs.find(o => o.type === 'httpstream');
           if (httpstreamOutput && httpstreamOutput.urls) {
             const hlsEntry = httpstreamOutput.urls.find(u => u.format === 'hls');
             if (hlsEntry) hlsUrl = hlsEntry.url;
@@ -403,18 +406,19 @@ try {
         await updateHlsStatus(videoId, {
           hls_status: 'ready',
           hls_url: hlsUrl,
-          transcode_job_id: payload.id
+          transcode_job_id: jobId
         });
 
-      } else if (jobStatus === 'job.failed' || jobStatus === 'job.error') {
+      } else if (eventType === 'job.failed' || eventType === 'job.error') {
         console.error(`[Coconut Webhook] HLS FAILED for video ${videoId}:`, JSON.stringify(payload));
         await updateHlsStatus(videoId, {
           hls_status: 'failed',
-          transcode_job_id: payload.id
+          transcode_job_id: jobId
         });
 
       } else {
-        console.log(`[Coconut Webhook] In-progress: ${payload.status} for video ${videoId}`);
+        // In-progress events like input.transferred, output.completed, etc.
+        console.log(`[Coconut Webhook] Event: ${eventType} for video ${videoId}`);
       }
 
       res.status(200).json({ received: true });
