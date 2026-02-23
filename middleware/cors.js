@@ -5,7 +5,7 @@ const logger = require('../utils/logger');
  * This ensures CORS headers are set consistently across all routes
  */
 function corsMiddleware(req, res, next) {
-  // Define allowed origins - UPDATED to include lovable.dev
+  // Define allowed origins - UPDATED to include lovable.dev and rushes.cc
   const allowedOrigins = [
     "https://www.rushes.cc",
     "https://rushes.cc",

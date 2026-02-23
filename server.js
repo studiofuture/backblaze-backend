@@ -81,8 +81,8 @@ app.use((req, res, next) => {
   
   // Security: Define allowed origins
   const allowedOrigins = [
-    "https://www.rvshes.com",
-    "https://rvshes.com",
+    "https://www.rushes.cc",
+    "https://rushes.cc",
     "https://c36396e7-7511-4311-b6cd-951c02385844.lovableproject.com",
     "https://id-preview--c36396e7-7511-4311-b6cd-951c02385844.lovable.app",
     "https://lovable.dev",
@@ -215,7 +215,7 @@ if (FEATURE_FLAGS.backgroundProcessing) {
 app.get('/', (req, res) => {
   console.log('Ã°Å¸ÂÂ  ROOT ROUTE HIT');
   res.json({ 
-    message: 'Rvshes Backend Server - Enhanced with Secure Direct B2 Multipart Uploads!',
+    message: 'Rushes Backend Server - Enhanced with Secure Direct B2 Multipart Uploads!',
     port: process.env.PORT,
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV || 'development',
@@ -245,7 +245,7 @@ app.get('/health', (req, res) => {
   
   res.json({ 
     status: 'ok',
-    service: 'rvshes-backend-enhanced-secure',
+    service: 'rushes-backend-enhanced-secure',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: {

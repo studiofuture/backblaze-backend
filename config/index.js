@@ -137,7 +137,7 @@ const config = {
       }
     },
     
-    // CORS configuration
+    // CORS configuration - rushes.cc
     cors: {
       strictMode: process.env.CORS_STRICT_MODE === 'true',
       allowedOrigins: process.env.ALLOWED_ORIGINS ? 
