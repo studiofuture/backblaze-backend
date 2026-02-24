@@ -450,7 +450,8 @@ async function getSignedDownloadUrl(fileName, originalFilename, options = {}) {
     const authToken = authTokenResponse.data.authorizationToken;
 
     // Construct the signed download URL using B2 native API format
-    const signedUrl = `${downloadUrl}/file/${bucketName}/${encodeURIComponent(fileName)}?Authorization=${encodeURIComponent(authToken)}`;
+    // IMPORTANT: b2ContentDisposition must appear in BOTH the auth request AND the download URL
+    const signedUrl = `${downloadUrl}/file/${bucketName}/${encodeURIComponent(fileName)}?Authorization=${encodeURIComponent(authToken)}&b2ContentDisposition=${encodeURIComponent(contentDisposition)}`;
 
     logger.info(`🔗 Generated signed download URL for: ${fileName} (expires in ${validDurationInSeconds}s)`);
     return signedUrl;
