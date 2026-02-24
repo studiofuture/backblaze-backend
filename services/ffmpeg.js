@@ -97,6 +97,12 @@ async function extractVideoMetadata(videoPath) {
         codec: videoStream.codec_name || '',
         bitrate: parseInt(metadata.format.bit_rate || 0),
         size: parseInt(metadata.format.size || 0),
+        // Colour space metadata — useful for diagnosing HDR/wide-gamut sources
+        color_primaries: videoStream.color_primaries || 'unknown',
+        color_transfer: videoStream.color_transfer || 'unknown',
+        color_space: videoStream.color_space || 'unknown',
+        pix_fmt: videoStream.pix_fmt || 'unknown',
+        bit_depth: parseInt(videoStream.bits_per_raw_sample || 0),
       };
       
       logger.info(`[FFprobe] Extracted metadata:`, result);
@@ -117,7 +123,7 @@ async function extractMetadataFromRemote(videoUrl) {
     const ffprobeArgs = [
       '-v', 'error',
       '-select_streams', 'v:0',
-      '-show_entries', 'stream=width,height,codec_name:format=duration,size,bit_rate',
+      '-show_entries', 'stream=width,height,codec_name,color_primaries,color_transfer,color_space,pix_fmt,bits_per_raw_sample:format=duration,size,bit_rate',
       '-of', 'json',
       '-analyzeduration', '5000000', // Analyze first 5 seconds only
       '-probesize', '5000000', // Probe first 5MB only
@@ -167,9 +173,15 @@ async function extractMetadataFromRemote(videoUrl) {
           codec: videoStream.codec_name || '',
           bitrate: parseInt(format.bit_rate || 0),
           size: parseInt(format.size || 0),
+          // Colour space metadata — useful for diagnosing HDR/wide-gamut sources
+          color_primaries: videoStream.color_primaries || 'unknown',
+          color_transfer: videoStream.color_transfer || 'unknown',
+          color_space: videoStream.color_space || 'unknown',
+          pix_fmt: videoStream.pix_fmt || 'unknown',
+          bit_depth: parseInt(videoStream.bits_per_raw_sample || 0),
         };
         
-        logger.info(`âœ… Extracted remote metadata:`, result);
+        logger.info(`✅ Extracted remote metadata:`, result);
         resolve(result);
       } catch (parseError) {
         reject(new Error(`Failed to parse metadata: ${parseError.message}`));
@@ -212,6 +224,11 @@ async function extractVideoMetadataUnified(source) {
       codec: 'unknown',
       bitrate: 0,
       size: 0,
+      color_primaries: 'unknown',
+      color_transfer: 'unknown',
+      color_space: 'unknown',
+      pix_fmt: 'unknown',
+      bit_depth: 0,
       error: error.message
     };
   }

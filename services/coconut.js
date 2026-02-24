@@ -4,11 +4,14 @@
  * Triggers HLS transcoding jobs via Coconut's REST API after video upload.
  * Outputs adaptive bitrate HLS streams to a dedicated B2 bucket.
  * 
+ * Uses HEVC (H.265) encoding to preserve colour space (BT.2020/HDR/10-bit)
+ * from source videos. Ultrafast mode enabled for parallel chunk transcoding.
+ * 
  * Encoding ladder (Coconut never upscales, so we always send all variants):
  *   - Audio-only fallback: 64kbps AAC
- *   - 720p:  H.264 High, CRF quality=5, maxrate 4000k
- *   - 1080p: H.264 High, CRF quality=5, maxrate 14000k
- *   - 2160p: H.264 High, CRF quality=5, maxrate 24000k
+ *   - 720p:  HEVC, CRF quality=5, maxrate 3000k
+ *   - 1080p: HEVC, CRF quality=5, maxrate 9000k
+ *   - 2160p: HEVC, CRF quality=5, maxrate 15000k
  */
 const logger = require('../utils/logger');
 const { config } = require('../config');
@@ -55,6 +58,9 @@ async function createHlsJob(videoId, sourceUrl) {
   const notificationUrl = `${webhookUrl}?videoId=${encodeURIComponent(videoId)}`;
 
   const jobPayload = {
+    settings: {
+      ultrafast: true
+    },
     input: {
       url: sourceUrl
     },
@@ -75,12 +81,13 @@ async function createHlsJob(videoId, sourceUrl) {
         hls: {
           path: outputPath
         },
-        // Netflix-tier encoding ladder — Coconut skips any variant above source resolution
+        // HEVC encoding ladder — preserves colour space from H.265/HDR sources
+        // Coconut skips any variant above source resolution
         variants: [
           'mp4:x:64k',
-          'mp4:720p::quality=5,maxrate=4000k,vprofile=high',
-          'mp4:1080p::quality=5,maxrate=14000k,vprofile=high',
-          'mp4:2160p::quality=5,maxrate=24000k,vprofile=high'
+          'mp4:hevc_720p::quality=5,maxrate=3000k',
+          'mp4:hevc_1080p::quality=5,maxrate=9000k',
+          'mp4:hevc_2160p::quality=5,maxrate=15000k'
         ]
       }
     }
