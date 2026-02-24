@@ -35,6 +35,74 @@ function getSupabaseClient() {
 }
 
 /**
+ * Download a video file via the browser's native download manager
+ * GET /:videoId/download
+ * 
+ * Generates a signed B2 URL with Content-Disposition: attachment
+ * and redirects the browser to it, triggering the native download queue.
+ */
+router.get('/:videoId/download', async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    
+    if (!videoId) {
+      return res.status(400).json({ error: "Video ID is required" });
+    }
+    
+    logger.info(`⬇️ Download requested for video: ${videoId}`);
+    
+    // Get Supabase client
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return res.status(500).json({ error: "Database client not available" });
+    }
+    
+    // Look up the video in the database
+    const { data, error } = await supabase
+      .from('videos')
+      .select('storage_url, original_filename, title')
+      .eq('id', videoId)
+      .single();
+    
+    if (error || !data) {
+      logger.error(`❌ Video not found for download: ${videoId}`, error);
+      return res.status(404).json({ error: "Video not found" });
+    }
+    
+    if (!data.storage_url) {
+      return res.status(404).json({ error: "Video file URL not found" });
+    }
+    
+    // Extract the B2 filename from the storage URL
+    let storageUrl = data.storage_url;
+    if (storageUrl.includes('?')) {
+      storageUrl = storageUrl.split('?')[0];
+    }
+    const parts = storageUrl.split('/');
+    const b2FileName = parts[parts.length - 1];
+    
+    if (!b2FileName) {
+      return res.status(404).json({ error: "Could not determine file name" });
+    }
+    
+    // Use the original filename if available, otherwise fall back to title or B2 filename
+    const downloadFilename = data.original_filename || data.title || b2FileName;
+    
+    // Generate signed download URL with Content-Disposition: attachment
+    const signedUrl = await b2Service.getSignedDownloadUrl(b2FileName, downloadFilename);
+    
+    logger.info(`✅ Redirecting download for ${videoId} -> ${b2FileName}`);
+    
+    // 302 redirect — browser follows this and triggers native download manager
+    res.redirect(302, signedUrl);
+    
+  } catch (error) {
+    logger.error(`❌ Download error for video ${req.params.videoId}:`, error);
+    res.status(500).json({ error: "Failed to generate download link" });
+  }
+});
+
+/**
  * Delete a video from Backblaze by filename
  * DELETE /file/:filename
  */

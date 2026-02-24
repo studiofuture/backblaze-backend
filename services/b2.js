@@ -411,6 +411,56 @@ async function testConnection() {
   }
 }
 
+/**
+ * Generate a signed download URL with Content-Disposition: attachment
+ * This forces the browser to trigger its native download manager
+ * 
+ * @param {string} fileName - The file name in the B2 bucket
+ * @param {string} originalFilename - The original filename to use in the download
+ * @param {object} options - Optional settings
+ * @param {string} options.bucketId - B2 bucket ID (defaults to video bucket)
+ * @param {string} options.bucketName - B2 bucket name (defaults to video bucket)
+ * @param {number} options.validDurationInSeconds - URL validity (default 3600 = 1 hour)
+ * @returns {string} Signed download URL
+ */
+async function getSignedDownloadUrl(fileName, originalFilename, options = {}) {
+  const {
+    bucketId = config.b2.buckets.video.id,
+    bucketName = config.b2.buckets.video.name,
+    validDurationInSeconds = 3600
+  } = options;
+
+  try {
+    const authResponse = await b2.authorize();
+    const downloadUrl = authResponse.data.downloadUrl;
+
+    // Build Content-Disposition header value
+    // Use RFC 5987 encoding for non-ASCII filenames
+    const safeFilename = originalFilename.replace(/[^\x20-\x7E]/g, '_');
+    const contentDisposition = `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(originalFilename)}`;
+
+    // Get download authorization token with Content-Disposition baked in
+    const authTokenResponse = await b2.getDownloadAuthorization({
+      bucketId: bucketId,
+      fileNamePrefix: fileName,
+      validDurationInSeconds: validDurationInSeconds,
+      b2ContentDisposition: contentDisposition
+    });
+
+    const authToken = authTokenResponse.data.authorizationToken;
+
+    // Construct the signed download URL using B2 native API format
+    const signedUrl = `${downloadUrl}/file/${bucketName}/${encodeURIComponent(fileName)}?Authorization=${encodeURIComponent(authToken)}`;
+
+    logger.info(`🔗 Generated signed download URL for: ${fileName} (expires in ${validDurationInSeconds}s)`);
+    return signedUrl;
+
+  } catch (error) {
+    logger.error(`❌ Failed to generate signed download URL for ${fileName}:`, error);
+    throw error;
+  }
+}
+
 module.exports = {
   uploadFileOptimized,
   uploadFile: uploadFileOptimized, // Alias for backward compatibility
@@ -418,5 +468,6 @@ module.exports = {
   uploadSubtitle,
   uploadFrame,
   deleteFile,
+  getSignedDownloadUrl,
   testConnection
 };
