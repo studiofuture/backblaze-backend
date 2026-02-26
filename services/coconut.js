@@ -6,7 +6,7 @@
  * 
  * Uses H.264 High profile with explicit yuv420p pixel format to ensure
  * clean colour space conversion from HDR/10-bit sources.
- * Ultrafast mode enabled for parallel chunk transcoding.
+ * Ultrafast mode DISABLED — was causing frame drops and audio desync.
  * 
  * Encoding ladder (Coconut never upscales, so we always send all variants):
  *   - Audio-only fallback: 64kbps AAC
@@ -59,9 +59,6 @@ async function createHlsJob(videoId, sourceUrl) {
   const notificationUrl = `${webhookUrl}?videoId=${encodeURIComponent(videoId)}`;
 
   const jobPayload = {
-    settings: {
-      ultrafast: true
-    },
     input: {
       url: sourceUrl
     },
