@@ -20,6 +20,7 @@ const b2Service = require('../services/b2');
 const ffmpegService = require('../services/ffmpeg');
 const multipartUploader = require('../services/multipart-uploader'); // Now streaming proxy version
 const coconutService = require('../services/coconut');
+const { updateHlsStatus } = require('../services/supabase');
 
 // Security: Rate limiting configurations
 const strictRateLimit = rateLimit({
@@ -332,6 +333,11 @@ router.post('/complete-chunks', moderateRateLimit, async (req, res) => {
           hlsStatus = 'processing';
           transcodeJobId = hlsResult.jobId;
           console.log(`🎬 HLS transcode job created: ${hlsResult.jobId} for video ${sanitizedVideoId}`);
+          // Write processing status directly to Supabase so frontend can react via Realtime
+          await updateHlsStatus(sanitizedVideoId, {
+            hls_status: 'processing',
+            transcode_job_id: hlsResult.jobId
+          });
         }
       } catch (hlsError) {
         console.error(`⚠️ HLS transcode trigger failed (non-fatal):`, hlsError.message);
@@ -707,6 +713,11 @@ router.post('/multipart/complete', moderateRateLimit, async (req, res) => {
           hlsStatus = 'processing';
           transcodeJobId = hlsResult.jobId;
           console.log(`🎬 HLS transcode job created: ${hlsResult.jobId} for video ${sanitizedVideoId}`);
+          // Write processing status directly to Supabase so frontend can react via Realtime
+          await updateHlsStatus(sanitizedVideoId, {
+            hls_status: 'processing',
+            transcode_job_id: hlsResult.jobId
+          });
         }
       } catch (hlsError) {
         console.error(`⚠️ HLS transcode trigger failed (non-fatal):`, hlsError.message);
