@@ -9,7 +9,7 @@
  * Ultrafast mode DISABLED — was causing frame drops and audio desync.
  * 
  * Encoding ladder (Coconut never upscales, so we always send all variants):
- *   - Audio-only fallback: 64kbps AAC
+ *   - 480p:  H.264 High, CRF quality=5, maxrate 2000k, yuv420p
  *   - 720p:  H.264 High, CRF quality=5, maxrate 4000k, yuv420p
  *   - 1080p: H.264 High, CRF quality=5, maxrate 14000k, yuv420p
  *   - 2160p: H.264 High, CRF quality=5, maxrate 24000k, yuv420p
@@ -82,7 +82,7 @@ async function createHlsJob(videoId, sourceUrl) {
         // H.264 High encoding ladder with explicit yuv420p for clean colour conversion
         // Coconut skips any variant above source resolution
         variants: [
-          'mp4:x:64k',
+          'mp4:480p::quality=5,maxrate=2000k,vprofile=high,pix_fmt=yuv420p',
           'mp4:720p::quality=5,maxrate=4000k,vprofile=high,pix_fmt=yuv420p',
           'mp4:1080p::quality=5,maxrate=14000k,vprofile=high,pix_fmt=yuv420p',
           'mp4:2160p::quality=5,maxrate=24000k,vprofile=high,pix_fmt=yuv420p'
